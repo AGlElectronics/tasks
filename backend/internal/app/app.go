@@ -88,7 +88,10 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 	}
 
 	brandProvider := brand.New(cfg)
-	den := denlink.New(pool, denlink.Config{Slug: "tasks", Version: Version, InternalURL: cfg.DenInternalURL}, logger)
+	den := denlink.New(pool, denlink.Config{Slug: "tasks", Version: Version, InternalURL: cfg.DenInternalURL, Mode: cfg.DenMode}, logger)
+	if err := den.Restore(ctx); err != nil {
+		logger.Warn().Err(err).Msg("den link: load failed")
+	}
 	go den.Run(ctx)
 
 	// Due-date automations sweep (TASK-22): every minute, fire

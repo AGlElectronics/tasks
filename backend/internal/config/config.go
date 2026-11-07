@@ -16,6 +16,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/AGlElectronics/tasks/backend/internal/clientip"
+	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 )
 
 // AuthMode selects how incoming requests are authenticated.
@@ -67,6 +68,9 @@ type Config struct {
 	BrandLocalPath string // optional brand.json; Den's brand overlays it once paired
 	// DenInternalURL replaces the host of pasted Den pairing URLs (Docker).
 	DenInternalURL string
+	// DenMode is DEN_MODE: required keeps the API locked until the module
+	// is paired with Den; standalone (the default) does not.
+	DenMode denlink.Mode
 
 	// HTTP
 	CORSAllowedOrigins []string
@@ -112,6 +116,7 @@ func Load() (*Config, error) {
 
 		BrandLocalPath: getEnv("BRAND_LOCAL_PATH", ""),
 		DenInternalURL: getEnv("DEN_INTERNAL_URL", ""),
+		DenMode:        denlink.Mode(getEnv("DEN_MODE", string(denlink.ModeStandalone))),
 
 		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3009")),
 		ShutdownTimeout:    getEnvDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
@@ -134,6 +139,9 @@ func (c *Config) validate() error {
 
 	if c.DatabaseURL == "" {
 		errs = append(errs, "DATABASE_URL is required")
+	}
+	if err := c.DenMode.Validate(); err != nil {
+		errs = append(errs, err.Error())
 	}
 
 	switch c.AuthMode {
