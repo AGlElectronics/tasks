@@ -122,6 +122,10 @@ func (s *Service) UpdateChecklistItem(ctx context.Context, actor, itemID uuid.UU
 			if err := addEvent(ctx, tx, i.TaskID, actor, "checklist_completed", nil); err != nil {
 				return ChecklistItem{}, err
 			}
+			// Automations: "when the checklist is completed…" (TASK-22).
+			if err := s.fireAutomations(ctx, tx, i.TaskID, &actor, autoTrigger{kind: "checklist_completed"}, map[uuid.UUID]bool{}, 0); err != nil {
+				return ChecklistItem{}, err
+			}
 		}
 	}
 	return i, tx.Commit(ctx)

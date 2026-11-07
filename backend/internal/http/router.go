@@ -39,6 +39,7 @@ import (
 
 	"github.com/AGlElectronics/tasks/backend/internal/auth"
 	"github.com/AGlElectronics/tasks/backend/internal/brand"
+	"github.com/AGlElectronics/tasks/backend/internal/clientip"
 	"github.com/AGlElectronics/tasks/backend/internal/config"
 	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 	"github.com/AGlElectronics/tasks/backend/internal/domain"
@@ -66,7 +67,7 @@ func NewRouter(deps Deps, version string) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
-	r.Use(chimiddleware.RealIP)
+	r.Use(clientip.Middleware(deps.Config.TrustedProxyCIDRs))
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(60 * time.Second))
 	// Cap request bodies at 1 MB (TASK-39); attachment uploads (TASK-7)
@@ -203,6 +204,11 @@ func NewRouter(deps Deps, version string) http.Handler {
 				secure.Post("/spaces/{space}/folders", handle(th.createFolder))
 				secure.Patch("/folders/{folder}", handle(th.updateFolder))
 				secure.Delete("/folders/{folder}", handle(th.deleteFolder))
+				secure.Get("/spaces/{space}/automations", handle(th.listAutomations))
+				secure.Post("/spaces/{space}/automations", handle(th.createAutomation))
+				secure.Patch("/automations/{automation}", handle(th.updateAutomation))
+				secure.Delete("/automations/{automation}", handle(th.deleteAutomation))
+				secure.Get("/automations/{automation}/runs", handle(th.automationRuns))
 				secure.Get("/spaces/{space}/archived-lists", handle(th.archivedLists))
 				secure.Get("/spaces/{space}/trash", handle(th.trash))
 				secure.Post("/tasks/{task}/restore", handle(th.restoreTask))

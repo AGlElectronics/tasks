@@ -30,6 +30,7 @@ import {
   type Space,
   type StatusInput,
 } from '@/api/tasks';
+import { AutomationsCard } from '@/components/AutomationsCard';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { notify } from '@/lib/notify';
@@ -678,6 +679,7 @@ export function SpacePage() {
         {sp.can_manage ? (
           <div className="space-y-6">
             <SharingCard space={sp} />
+            <AutomationsCard space={sp} />
             <TagsCard space={sp} />
             <FoldersCard space={sp} />
             <StatusesCard space={sp} />

@@ -341,6 +341,87 @@ export const addFavorite = (f: Favorite) => apiRequest<void>('/api/v1/favorites'
 export const removeFavorite = (f: Favorite) =>
   apiRequest<void>('/api/v1/favorites/remove', { method: 'POST', body: f });
 
+// Automations (TASK-22)
+export type AutomationTrigger = {
+  type:
+    | 'task_created'
+    | 'status_changed'
+    | 'assignee_added'
+    | 'comment_added'
+    | 'checklist_completed'
+    | 'due_approaching';
+  status_id?: string;
+  category?: string;
+  days_before?: number;
+};
+export type AutomationCondition = {
+  field: 'list' | 'status' | 'priority' | 'tag' | 'assignee';
+  value: string;
+};
+export type AutomationAction = {
+  type:
+    | 'set_status'
+    | 'assign'
+    | 'set_priority'
+    | 'set_due'
+    | 'add_tag'
+    | 'move_list'
+    | 'create_subtask'
+    | 'add_checklist_item'
+    | 'add_comment'
+    | 'notify';
+  status_id?: string;
+  user_id?: string;
+  priority?: string;
+  days?: number;
+  tag_id?: string;
+  list_id?: string;
+  title?: string;
+  body?: string;
+  message?: string;
+};
+export type Automation = {
+  id: string;
+  space_id: string;
+  list_id: string | null;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  conditions: AutomationCondition[];
+  actions: AutomationAction[];
+  created_at: string;
+  updated_at: string;
+};
+export type AutomationRun = {
+  id: string;
+  task_id: string | null;
+  task_key: string;
+  status: 'ok' | 'error';
+  detail: string;
+  created_at: string;
+};
+export type AutomationInput = {
+  name?: string;
+  enabled?: boolean;
+  list_id?: string | null;
+  trigger?: AutomationTrigger;
+  conditions?: AutomationCondition[];
+  actions?: AutomationAction[];
+};
+
+export const listAutomations = (spaceId: string, signal?: AbortSignal) =>
+  apiRequest<{ automations: Automation[] }>(`/api/v1/spaces/${spaceId}/automations`, { signal }).then(
+    (r) => r.automations
+  );
+export const createAutomation = (spaceId: string, body: AutomationInput) =>
+  apiRequest<Automation>(`/api/v1/spaces/${spaceId}/automations`, { method: 'POST', body });
+export const updateAutomation = (id: string, body: AutomationInput) =>
+  apiRequest<Automation>(`/api/v1/automations/${id}`, { method: 'PATCH', body });
+export const deleteAutomation = (id: string) =>
+  apiRequest<void>(`/api/v1/automations/${id}`, { method: 'DELETE' });
+export const automationRuns = (id: string, signal?: AbortSignal) =>
+  apiRequest<{ runs: AutomationRun[] }>(`/api/v1/automations/${id}/runs`, { signal }).then((r) => r.runs);
+
 // Archived lists (TASK-48)
 export const archivedLists = (spaceId: string, signal?: AbortSignal) =>
   apiRequest<{ lists: List[] }>(`/api/v1/spaces/${spaceId}/archived-lists`, { signal }).then((r) => r.lists);

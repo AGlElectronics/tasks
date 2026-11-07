@@ -7,12 +7,15 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
+
+	"github.com/AGlElectronics/tasks/backend/internal/clientip"
 )
 
 // AuthMode selects how incoming requests are authenticated.
@@ -67,7 +70,10 @@ type Config struct {
 
 	// HTTP
 	CORSAllowedOrigins []string
-	ShutdownTimeout    time.Duration
+	// TrustedProxyCIDRs lists the proxies whose X-Forwarded-For entries are
+	// believed when working out the client IP (TRUSTED_PROXY_CIDRS).
+	TrustedProxyCIDRs []netip.Prefix
+	ShutdownTimeout   time.Duration
 }
 
 // Load reads environment variables (plus an optional .env file) and returns
@@ -110,6 +116,12 @@ func Load() (*Config, error) {
 		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3009")),
 		ShutdownTimeout:    getEnvDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
+
+	trusted, err := clientip.ParseCIDRs(getEnv("TRUSTED_PROXY_CIDRS", clientip.DefaultTrustedProxies))
+	if err != nil {
+		return nil, fmt.Errorf("invalid config: TRUSTED_PROXY_CIDRS: %w", err)
+	}
+	cfg.TrustedProxyCIDRs = trusted
 
 	if err := cfg.validate(); err != nil {
 		return nil, err

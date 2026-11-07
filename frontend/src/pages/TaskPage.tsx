@@ -56,6 +56,12 @@ function str(v: unknown) {
 }
 
 function describe(e: TaskEvent): string {
+  const base = describeBase(e);
+  const auto = str(e.data.automation);
+  return auto ? `${base} — automation “${auto}”` : base;
+}
+
+function describeBase(e: TaskEvent): string {
   const from = str(e.data.from);
   const to = str(e.data.to);
   switch (e.kind) {

@@ -8,6 +8,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/AGlElectronics/tasks/backend/internal/auth"
+	"github.com/AGlElectronics/tasks/backend/internal/clientip"
 )
 
 // rateLimiter is a per-user token bucket (TASK-41). The limits are
@@ -57,7 +58,7 @@ func (rl *rateLimiter) allow(key string) bool {
 // client cannot slow anyone else down. It must run inside the auth group.
 func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := r.RemoteAddr
+		key := clientip.FromRequest(r)
 		if u, ok := auth.FromContext(r.Context()); ok {
 			key = u.Issuer + "|" + u.Subject
 		}

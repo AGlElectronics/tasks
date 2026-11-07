@@ -1,5 +1,5 @@
 // Package files wraps an S3-compatible object storage client for task
-// attachments (TASK-7). In local development this points at MinIO; in
+// attachments (TASK-7). In local development this points at the dev S3 server (SeaweedFS); in
 // production it MUST point at a managed S3-compatible bucket.
 //
 // Storage is optional: New returns a nil *Client when S3_ENDPOINT is empty,

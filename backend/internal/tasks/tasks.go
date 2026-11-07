@@ -325,7 +325,10 @@ func (s *Service) Detail(ctx context.Context, id uuid.UUID) (TaskDetail, error) 
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT c.id, c.author_id, COALESCE(u.display_name, 'Former user'), c.body, c.created_at, c.edited_at
+		SELECT c.id, c.author_id,
+		       -- NULL author: an automation (named) or a deleted user.
+		       COALESCE(u.display_name, 'Automation “' || NULLIF(c.via_automation, '') || '”', 'Former user'),
+		       c.body, c.created_at, c.edited_at
 		  FROM comments c LEFT JOIN users u ON u.id = c.author_id
 		 WHERE c.task_id = $1 ORDER BY c.created_at`, id)
 	if err != nil {
@@ -559,6 +562,10 @@ func (s *Service) CreateTask(ctx context.Context, actor uuid.UUID, in TaskInput)
 	if err := addEvent(ctx, tx, id, actor, "created", nil); err != nil {
 		return Task{}, err
 	}
+	// Automations: "when a task is created…" (TASK-22).
+	if err := s.fireAutomations(ctx, tx, id, &actor, autoTrigger{kind: "task_created"}, map[uuid.UUID]bool{}, 0); err != nil {
+		return Task{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Task{}, err
 	}
@@ -659,6 +666,10 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	// Automation triggers collected along the way, fired before commit.
+	var statusTrig *autoTrigger
+	assigneeAdded := false
+
 	if p.Title != nil && *p.Title != cur.Title {
 		if _, err := tx.Exec(ctx, `UPDATE tasks SET title = $2 WHERE id = $1`, id, *p.Title); err != nil {
 			return Task{}, err
@@ -696,6 +707,7 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 		if err := s.notifyFollowers(ctx, tx, id, actor, "status", "moved to "+name); err != nil {
 			return Task{}, err
 		}
+		statusTrig = &autoTrigger{kind: "status_changed", statusID: *p.StatusID, category: category}
 	}
 	if p.ListID != nil && *p.ListID != cur.ListID {
 		if cur.ParentID != nil {
@@ -804,6 +816,7 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 			if err := s.notify(ctx, tx, id, actor, "assigned", "assigned this task to you", []uuid.UUID{uid}); err != nil {
 				return Task{}, err
 			}
+			assigneeAdded = true
 		}
 		for uid, name := range before {
 			if after[uid] {
@@ -859,6 +872,19 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 	}
 	if tag.RowsAffected() == 0 {
 		return Task{}, httperror.Conflict("someone else changed this task — reload and try again")
+	}
+	// Automations fire inside this transaction, after the patch itself, so
+	// rules see the task as the user left it (TASK-22).
+	visited := map[uuid.UUID]bool{}
+	if statusTrig != nil {
+		if err := s.fireAutomations(ctx, tx, id, &actor, *statusTrig, visited, 0); err != nil {
+			return Task{}, err
+		}
+	}
+	if assigneeAdded {
+		if err := s.fireAutomations(ctx, tx, id, &actor, autoTrigger{kind: "assignee_added"}, visited, 0); err != nil {
+			return Task{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Task{}, err
@@ -1138,6 +1164,10 @@ func (s *Service) AddComment(ctx context.Context, actor, taskID uuid.UUID, body 
 	}
 	// Followers who were mentioned already got the louder notification.
 	if err := s.notifyFollowersExcept(ctx, tx, taskID, actor, "comment", "commented: "+snippet, mentions); err != nil {
+		return Comment{}, err
+	}
+	// Automations: "when a comment is added…" (TASK-22).
+	if err := s.fireAutomations(ctx, tx, taskID, &actor, autoTrigger{kind: "comment_added"}, map[uuid.UUID]bool{}, 0); err != nil {
 		return Comment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

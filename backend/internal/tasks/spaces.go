@@ -67,10 +67,10 @@ type Space struct {
 	CreatedBy   *uuid.UUID `json:"created_by,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	// EveryoneLevel is the level every signed-in user gets; nil = closed.
-	EveryoneLevel *string  `json:"everyone_level"`
-	Lists         []List   `json:"lists"`
-	Folders       []Folder `json:"folders"`
-	Statuses      []Status `json:"statuses"`
+	EveryoneLevel *string   `json:"everyone_level"`
+	Lists         []List    `json:"lists"`
+	Folders       []Folder  `json:"folders"`
+	Statuses      []Status  `json:"statuses"`
 	OrgID         uuid.UUID `json:"-"`
 }
 
@@ -326,7 +326,8 @@ func (s *Service) CreateSpace(ctx context.Context, orgID, userID uuid.UUID, in S
 }
 
 // UpdateSpace applies the non-nil fields. Changing the key renames every
-// task ID in the space (old IDs stop resolving; MVP).
+// task ID in the space; the old KEY-N references are aliased in task_ids so
+// they keep resolving (TASK-45).
 func (s *Service) UpdateSpace(ctx context.Context, id uuid.UUID, in SpaceInput) (Space, error) {
 	if err := in.validate(false); err != nil {
 		return Space{}, err
@@ -341,7 +342,24 @@ func (s *Service) UpdateSpace(ctx context.Context, id uuid.UUID, in SpaceInput) 
 		n := strings.TrimSpace(*in.Name)
 		name = &n
 	}
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Space{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if key != nil {
+		// Alias every task's current KEY-N before the rename (no-op when
+		// the key is unchanged thanks to the WHERE).
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO task_ids (key, task_id)
+			SELECT sp.key || '-' || t.number, t.id
+			  FROM tasks t JOIN spaces sp ON sp.id = t.space_id
+			 WHERE sp.id = $1 AND sp.key <> $2
+			ON CONFLICT (key) DO UPDATE SET task_id = EXCLUDED.task_id`, id, *key); err != nil {
+			return Space{}, err
+		}
+	}
+	_, err = tx.Exec(ctx, `
 		UPDATE spaces SET name = COALESCE($2, name), key = COALESCE($3, key), color = COALESCE($4, color),
 		       description = COALESCE($5, description),
 		       everyone_level = CASE WHEN $6 THEN $7 ELSE everyone_level END,
@@ -351,6 +369,9 @@ func (s *Service) UpdateSpace(ctx context.Context, id uuid.UUID, in SpaceInput) 
 		if isUniqueViolation(err) {
 			return Space{}, httperror.Conflict("another space already uses this key")
 		}
+		return Space{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Space{}, err
 	}
 	return s.GetSpace(ctx, id)

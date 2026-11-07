@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/rs/zerolog"
 
@@ -51,6 +51,7 @@ role = "space_creator"
 type harness struct {
 	t      *testing.T
 	router http.Handler
+	pool   *pgxpool.Pool
 }
 
 func newHarness(t *testing.T) *harness {
@@ -108,7 +109,7 @@ func newHarness(t *testing.T) *harness {
 		Brand:  brand.New(cfg),
 		Access: access,
 	}, "test")
-	return &harness{t: t, router: router}
+	return &harness{t: t, router: router, pool: pool}
 }
 
 // as is a request principal: dev user name plus simulated IdP groups.

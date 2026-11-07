@@ -26,28 +26,11 @@ import { Card } from '@/components/ui/Card';
 import { PageContainer } from '@/components/ui/PageHeader';
 import { ErrorRow, LoadingRow } from '@/components/ui/States';
 import { Avatars, DueBadge, PriorityFlag, StatusSelect, TaskLink, TaskMeta } from '@/components/TaskBits';
+import { dropPosition, orderTasks } from '@/lib/board';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 
 export type ListSearch = { view?: 'list' | 'board' };
-
-// Clear visual order inside a status group (part of the Vikunja feedback):
-// urgent things first, then by due date, then manual position.
-const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
-
-function orderTasks(rows: Task[]): Task[] {
-  return [...rows].sort((a, b) => {
-    const pa = a.priority ? PRIORITY_RANK[a.priority] : 4;
-    const pb = b.priority ? PRIORITY_RANK[b.priority] : 4;
-    if (pa !== pb) return pa - pb;
-    if (a.due_at !== b.due_at) {
-      if (!a.due_at) return 1;
-      if (!b.due_at) return -1;
-      return a.due_at.localeCompare(b.due_at);
-    }
-    return a.position - b.position;
-  });
-}
 
 type Filters = {
   text: string;
@@ -456,15 +439,7 @@ function BoardView({
     setOver(null);
     if (!dragged) return;
     const col = tasks.filter((t) => t.status.id === statusId && t.id !== dragged.id);
-    let position: number;
-    const idx = beforeId ? col.findIndex((t) => t.id === beforeId) : -1;
-    if (idx === -1) {
-      position = col.length ? col[col.length - 1].position + 1024 : 1024;
-    } else {
-      const next = col[idx].position;
-      const prev = idx > 0 ? col[idx - 1].position : next - 1024;
-      position = (prev + next) / 2;
-    }
+    const position = dropPosition(col, beforeId);
     const body: TaskPatch = { position, version: dragged.version };
     if (statusId !== dragged.status.id) body.status_id = statusId;
     patch.mutate({ id: dragged.id, body });

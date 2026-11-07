@@ -7,7 +7,43 @@ tracking work without ClickUp's long tail. Same shape as every other module
 (own database, own bucket, OIDC against the shared Keycloak, role catalog,
 Den pairing, Den's nightly backups).
 
-Status: **planning**. Nothing here is built yet.
+Status: **built** (November 2026). The MVP below is live; the sections
+after this one are the original plan, kept for the reasoning. Where the
+built thing deviates from the plan, the next section is the truth.
+
+## Built, and how it deviates from the plan
+
+Everything in milestones 1–7 exists: spaces, lists, boards, statuses,
+tasks with `KEY-N` IDs, subtasks, assignees, tags, checklists, comments
+with mentions and editing, watchers, Inbox, My Work, Ctrl+K search,
+favourites, folders, attachments, trash, archiving, audit log, grants,
+smoke script and docs. **Automations shipped too** (planned "later"):
+six triggers, conditions, ten actions, same-transaction execution, loop
+guard, due-date sweep, run history, builder UI with templates — they were
+the loudest item in the Vikunja feedback ("no good way to automate").
+
+Deviations from the plan, deliberate:
+
+| Planned | Built | Why |
+| --- | --- | --- |
+| Fractional-index strings for ordering | Float positions + automatic renumbering when a gap closes | Simpler; the rebalance (TASK-37) runs in the same transaction and bumps no versions. |
+| Status categories incl. `closed` | Three categories: `not_started`, `active`, `done` | Nobody could say what `closed` adds over `done`; archive the list instead. |
+| BlockNote JSON descriptions and comments | Plain text | The wiki is for documents; task descriptions stayed deliberately light (part of the "too many fields" feedback). |
+| Per-list status sets | Statuses per space only | Keeps cross-list boards and automations coherent; nobody asked for per-list sets. |
+| Access levels view/comment/edit/full, restriction | view/edit/manage; private lists instead of restriction | Three levels cover the real cases; a private list is the understandable version of "restricted". Assignment opens one task at edit, watching at view. |
+| Saved views with stored filter configs | List/Board toggle + a filter bar (not persisted) | Saved views can come later without schema changes; filters cover the daily need. |
+| `tsvector` full-text search | Title/key ILIKE search, exact key pinned first | Descriptions are short; title search found everything people looked for. Easy to upgrade later. |
+| Attachments on tasks and comments | Attachments on tasks only | Comment attachments were never requested. |
+| Named checklists (several per task) | One flat checklist per task | Matches how checklists were actually used in Vikunja. |
+| Any number of replicas | **One backend replica** | The per-user rate limiter is in-process and the due-sweep ticker is per-process (run history dedups, but two replicas would race). |
+| Due-soon notifier under an advisory lock | Due-date automations (sweep each minute) | Reminders became an automation ("due in 1 day → notify / set urgent") instead of a hard-coded notifier. |
+
+Also added beyond the plan: one space per HR department created
+automatically through `/api/internal/departments` (see Decided, below),
+cursor pagination with `X-Next-Cursor`, per-user rate limiting, soft
+delete with restore/purge, `task_ids` aliases across space-key renames
+and cross-space moves, and a `tasks-dev` compose profile (ports
+8161/3010, database `tasks_dev`) for developing next to the live one.
 
 ## Decisions so far
 

@@ -2,7 +2,9 @@
 // "details"}} error shape). The auth-headers resolver is injected at
 // startup from src/auth/installAuth.ts.
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+import { runtimeConfig } from '@/runtime-config';
+
+const apiBaseUrl = () => runtimeConfig().apiBaseUrl;
 
 export type ApiErrorBody = {
   error: {
@@ -62,7 +64,7 @@ export async function apiRequestWithHeaders<T>(
   opts: RequestOpts = {}
 ): Promise<{ data: T; headers: Headers }> {
   const url = new URL(
-    path.startsWith('http') ? path : `${API_BASE_URL}${path}`,
+    path.startsWith('http') ? path : `${apiBaseUrl()}${path}`,
     typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
   );
   if (opts.query) {
@@ -120,7 +122,7 @@ export async function apiRequestWithHeaders<T>(
 /** Multipart upload (attachments): auth headers, no JSON content type. */
 export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   const auth = await authHeadersResolver();
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`${apiBaseUrl()}${path}`, {
     method: 'POST',
     body: form,
     headers: { Accept: 'application/json', ...auth },
@@ -146,7 +148,7 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
 /** Authenticated binary fetch (attachment downloads). */
 export async function apiBlob(path: string): Promise<Blob> {
   const auth = await authHeadersResolver();
-  const res = await fetch(`${API_BASE_URL}${path}`, { headers: auth, credentials: 'include' });
+  const res = await fetch(`${apiBaseUrl()}${path}`, { headers: auth, credentials: 'include' });
   if (res.status === 401) unauthorizedHandler?.();
   if (!res.ok) {
     throw new ApiError(res.status, { error: { code: 'http_error', message: res.statusText } });

@@ -26,6 +26,8 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 	"github.com/AGlElectronics/tasks/backend/internal/files"
 	httpx "github.com/AGlElectronics/tasks/backend/internal/http"
+	"github.com/AGlElectronics/tasks/backend/internal/tasks"
+	"github.com/AGlElectronics/tasks/backend/internal/tlscert"
 )
 
 // Version is set via -ldflags at build time; left as "dev" for local runs.
@@ -89,6 +91,26 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 	den := denlink.New(pool, denlink.Config{Slug: "tasks", Version: Version, InternalURL: cfg.DenInternalURL}, logger)
 	go den.Run(ctx)
 
+	// Due-date automations sweep (TASK-22): every minute, fire
+	// "due approaching" rules for tasks whose due date is within reach.
+	sweepSvc := tasks.NewService(pool)
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n, err := sweepSvc.RunDueSweep(ctx); err != nil {
+					logger.Error().Err(err).Msg("due-date automation sweep failed")
+				} else if n > 0 {
+					logger.Info().Int("runs", n).Msg("due-date automations fired")
+				}
+			}
+		}
+	}()
+
 	// Attachment storage (TASK-7). Optional: nil means "not configured".
 	s3Ctx, cancelS3 := context.WithTimeout(ctx, 30*time.Second)
 	filesClient, err := files.New(s3Ctx, cfg)
@@ -119,6 +141,9 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	if _, err := tlscert.Configure(ctx, server, logger); err != nil {
+		return fmt.Errorf("tls: %w", err)
+	}
 
 	return runServer(ctx, server, pool, cfg.ShutdownTimeout, logger)
 }
@@ -130,7 +155,7 @@ func runServer(ctx context.Context, server *nethttp.Server, pool *pgxpool.Pool, 
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info().Str("addr", server.Addr).Msg("http listening")
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
+		if err := tlscert.ListenAndServe(server); err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)

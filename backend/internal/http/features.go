@@ -368,6 +368,132 @@ func (h *taskHandler) removeFavorite(r *http.Request, u *auth.User) (int, any, e
 }
 
 // ----------------------------------------------------------------------------
+// Automations (TASK-22): space managers run the whole space's rules; a
+// manager of just one list can manage rules scoped to that list.
+// ----------------------------------------------------------------------------
+
+// canManageAutomation: manage on the space, or manage on the rule's list.
+func (h *taskHandler) canManageAutomation(r *http.Request, u *auth.User, spaceID uuid.UUID, listID *uuid.UUID) error {
+	_, _, spaceErr := h.requireSpace(r, u, spaceID, tasks.LevelManage)
+	if spaceErr == nil {
+		return nil
+	}
+	if listID != nil {
+		if _, _, _, err := h.requireList(r, u, *listID, tasks.LevelManage); err == nil {
+			return nil
+		}
+	}
+	return spaceErr
+}
+
+func (h *taskHandler) listAutomations(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := parseUUIDParam(r, "space")
+	if err != nil {
+		return 0, nil, err
+	}
+	all, err := h.svc.SpaceAutomations(r.Context(), id)
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, _, err := h.requireSpace(r, u, id, tasks.LevelManage); err == nil {
+		return http.StatusOK, map[string]any{"automations": all}, nil
+	}
+	// Not a space manager: show only rules on lists this user manages.
+	visible := []tasks.Automation{}
+	for _, a := range all {
+		if a.ListID == nil {
+			continue
+		}
+		if _, _, _, err := h.requireList(r, u, *a.ListID, tasks.LevelManage); err == nil {
+			visible = append(visible, a)
+		}
+	}
+	if len(visible) == 0 {
+		// Same answer a stranger gets, so nothing about the space leaks.
+		if _, _, err := h.requireSpace(r, u, id, tasks.LevelView); err != nil {
+			return 0, nil, err
+		}
+	}
+	return http.StatusOK, map[string]any{"automations": visible}, nil
+}
+
+func (h *taskHandler) createAutomation(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := parseUUIDParam(r, "space")
+	if err != nil {
+		return 0, nil, err
+	}
+	var in tasks.AutomationInput
+	if err := decodeJSON(r, &in); err != nil {
+		return 0, nil, err
+	}
+	if err := h.canManageAutomation(r, u, id, in.ListID.Value); err != nil {
+		return 0, nil, err
+	}
+	a, err := h.svc.CreateAutomation(r.Context(), u.ID, id, in)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusCreated, a, nil
+}
+
+func (h *taskHandler) requireAutomation(r *http.Request, u *auth.User) (tasks.Automation, error) {
+	id, err := parseUUIDParam(r, "automation")
+	if err != nil {
+		return tasks.Automation{}, err
+	}
+	a, err := h.svc.GetAutomation(r.Context(), id)
+	if err != nil {
+		return tasks.Automation{}, err
+	}
+	if err := h.canManageAutomation(r, u, a.SpaceID, a.ListID); err != nil {
+		return tasks.Automation{}, err
+	}
+	return a, nil
+}
+
+func (h *taskHandler) updateAutomation(r *http.Request, u *auth.User) (int, any, error) {
+	a, err := h.requireAutomation(r, u)
+	if err != nil {
+		return 0, nil, err
+	}
+	var in tasks.AutomationInput
+	if err := decodeJSON(r, &in); err != nil {
+		return 0, nil, err
+	}
+	// Rescoping to another list needs rights on that list too.
+	if in.ListID.Set {
+		if err := h.canManageAutomation(r, u, a.SpaceID, in.ListID.Value); err != nil {
+			return 0, nil, err
+		}
+	}
+	out, err := h.svc.UpdateAutomation(r.Context(), a.ID, in)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, out, nil
+}
+
+func (h *taskHandler) deleteAutomation(r *http.Request, u *auth.User) (int, any, error) {
+	a, err := h.requireAutomation(r, u)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusNoContent, nil, h.svc.DeleteAutomation(r.Context(), a.ID)
+}
+
+func (h *taskHandler) automationRuns(r *http.Request, u *auth.User) (int, any, error) {
+	a, err := h.requireAutomation(r, u)
+	if err != nil {
+		return 0, nil, err
+	}
+	runs, err := h.svc.AutomationRuns(r.Context(), a.ID, 50)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, map[string]any{"runs": runs}, nil
+}
+
+// ----------------------------------------------------------------------------
 // Archived lists (TASK-48): managers see them so they can restore them.
 // ----------------------------------------------------------------------------
 
