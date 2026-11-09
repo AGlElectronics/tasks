@@ -1,5 +1,11 @@
 # Tasks
 
+> [!WARNING]
+> ## **NOT READY FOR PRODUCTION**
+>
+> Con Services is under active development. Expect breaking changes, missing
+> features and bugs. Do not use it for real events or real data yet.
+
 Project and task tracking for the Con Services stack: ClickUp-style
 spaces with lists and boards, built for convention crews that hated
 Vikunja's clutter. The plan and the decisions behind it are in
