@@ -97,6 +97,17 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   live-update stream gets no proxy buffering and no Gateway request
   timeout. One backend replica stays mandatory; why and what scaling out
   needs is in `docs/adr/0001-single-backend-replica.md`.
+- Helm chart: `existingSecret` must contain `DEN_LINK_ENCRYPTION_KEY` (the
+  backend pod stops with `CreateContainerConfigError` without it, unless
+  `config.APP_ENV` is `development`) and may contain `HR_SERVICE_TOKEN`
+  and `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`. `config` defaults to
+  `OIDC_AUDIENCE: tasks-api` and has `OIDC_GROUPS_CLAIM`,
+  `OIDC_GROUP_MATCH`, `OIDC_GROUP_PREFIX` and `DEN_ALLOWED_HOSTS`. The web
+  app's nginx sends the shared security headers;
+  `frontend.securityHeaders.keycloakOrigin` (default: the issuer's origin),
+  `.denOrigin`, `.s3Origin` and `.extraConnectSrc` fill in its
+  Content-Security-Policy, and an `emptyDir` at `/etc/nginx/snippets`
+  holds the generated snippet.
 - Development: `infra/docker-compose.yml` mounts
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
@@ -215,15 +226,15 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 - The Den credential is stored encrypted with `DEN_LINK_ENCRYPTION_KEY`
   (base64 of 32 bytes, `openssl rand -base64 32`), which is required
   unless `APP_ENV=development`; `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` allows a
-  rotation. A pasted pairing URL must point at a host in
+  rotation. A credential stored in plain text by an earlier build is
+  encrypted the first time the backend uses the link. A pasted pairing URL must point at a host in
   `DEN_ALLOWED_HOSTS` (or `DEN_INTERNAL_URL` must be set); in development
   `localhost` and `*.conservices.test` are always allowed. Keep the key in
   your secret manager; see
   [Secrets](https://aglelectronics.github.io/con-services/operations/secrets/).
 - JSON request bodies are limited to 1 MB (attachments and imports have
   their own, larger limits): a larger body answers `413
-  request_too_large`, a body that is not JSON `415
-  unsupported_media_type`.
+  request_too_large`.
 - `X-Dev-User` and `X-Dev-Groups` are dropped from every request and left
   out of CORS unless the backend runs with `AUTH_MODE=dev` and
   `APP_ENV=development`.
