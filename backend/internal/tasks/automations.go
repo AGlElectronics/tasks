@@ -639,14 +639,14 @@ func (s *Service) applyActions(ctx context.Context, tx pgx.Tx, a Automation, tas
 	for _, act := range a.Actions {
 		switch act.Type {
 		case "set_status":
-			var name, category, curName string
+			var name, category, curName, curCategory string
 			var same bool
 			err := tx.QueryRow(ctx, `
-				SELECT st.name, st.category, cur.name, t.status_id = st.id
+				SELECT st.name, st.category, cur.name, cur.category, t.status_id = st.id
 				  FROM tasks t
 				  JOIN statuses cur ON cur.id = t.status_id
 				  JOIN statuses st ON st.id = $2 AND st.space_id = t.space_id
-				 WHERE t.id = $1`, taskID, *act.StatusID).Scan(&name, &category, &curName, &same)
+				 WHERE t.id = $1`, taskID, *act.StatusID).Scan(&name, &category, &curName, &curCategory, &same)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, "", httperror.Validation("status no longer exists in this space", nil)
 			}
@@ -664,6 +664,11 @@ func (s *Service) applyActions(ctx context.Context, tx pgx.Tx, a Automation, tas
 			}
 			if err := autoEvent(ctx, tx, taskID, actor, "status", map[string]any{"from": curName, "to": name, "automation": a.Name}); err != nil {
 				return nil, "", err
+			}
+			if category == "done" && curCategory != "done" {
+				if err := s.spawnRecurrence(ctx, tx, taskID, actor); err != nil {
+					return nil, "", err
+				}
 			}
 			followers, err := s.followers(ctx, tx, taskID)
 			if err != nil {

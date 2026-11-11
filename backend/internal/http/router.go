@@ -264,6 +264,8 @@ func NewRouter(deps Deps, version string) http.Handler {
 				secure.Post("/tasks/{task}/restore", handle(th.restoreTask))
 				secure.Delete("/tasks/{task}/purge", handle(th.purgeTask))
 
+				secure.Post("/tasks/{task}/dependencies", handle(th.addDependency))
+				secure.Delete("/tasks/{task}/dependencies/{other}", handle(th.removeDependency))
 				secure.Post("/tasks/{task}/watch", handle(th.watch))
 				secure.Delete("/tasks/{task}/watch", handle(th.unwatch))
 				secure.Post("/tasks/{task}/checklist", handle(th.addChecklistItem))

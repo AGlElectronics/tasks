@@ -57,6 +57,10 @@ type Task struct {
 	CheckDone    int        `json:"checklist_done"`
 	// Fields maps custom field id → value (see fields.go).
 	Fields map[string]json.RawMessage `json:"fields"`
+	// Recurrence repeats the task when it is completed; nil = one-off.
+	Recurrence *Recurrence `json:"recurrence"`
+	// BlockedByOpen counts the unfinished tasks this one waits for.
+	BlockedByOpen int `json:"blocked_by_open"`
 }
 
 // The per-task aggregates come from lateral joins instead of four
@@ -70,7 +74,8 @@ SELECT t.id, sp.key || '-' || t.number, t.number, t.space_id, t.list_id, l.name,
        t.position, t.completed_at, t.version, t.created_at, t.updated_at, t.created_by,
        COALESCE(asg.people, '[]'::json), COALESCE(tgs.tags, '[]'::json),
        COALESCE(sub.total, 0), COALESCE(sub.done, 0), COALESCE(cmt.n, 0),
-       COALESCE(chk.total, 0), COALESCE(chk.done, 0), COALESCE(fvs.m, '{}'::json)
+       COALESCE(chk.total, 0), COALESCE(chk.done, 0), COALESCE(fvs.m, '{}'::json),
+       t.recurrence, COALESCE(dep.open, 0)
   FROM tasks t
   JOIN spaces sp ON sp.id = t.space_id
   JOIN lists l ON l.id = t.list_id
@@ -92,16 +97,21 @@ SELECT t.id, sp.key || '-' || t.number, t.number, t.space_id, t.list_id, l.name,
          FROM checklist_items ci WHERE ci.task_id = t.id) chk ON true
   LEFT JOIN LATERAL (
        SELECT json_object_agg(fv.field_id, fv.value) AS m
-         FROM task_field_values fv WHERE fv.task_id = t.id) fvs ON true`
+         FROM task_field_values fv WHERE fv.task_id = t.id) fvs ON true
+  LEFT JOIN LATERAL (
+       SELECT count(*) AS open
+         FROM task_dependencies d JOIN tasks b ON b.id = d.depends_on JOIN statuses bs ON bs.id = b.status_id
+        WHERE d.task_id = t.id AND b.deleted_at IS NULL AND bs.category <> 'done') dep ON true`
 
 func scanTask(row pgx.Row) (Task, error) {
 	var t Task
-	var assignees, tags, fields []byte
+	var assignees, tags, fields, recurrence []byte
 	err := row.Scan(&t.ID, &t.Key, &t.Number, &t.SpaceID, &t.ListID, &t.ListName,
 		&t.ParentID, &t.ParentKey, &t.ParentTitle,
 		&t.Title, &t.Description, &t.Status.ID, &t.Status.Name, &t.Status.Color, &t.Status.Category, &t.Priority,
 		&t.StartAt, &t.DueAt, &t.Position, &t.CompletedAt, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.CreatedBy,
-		&assignees, &tags, &t.SubtaskCount, &t.SubtaskDone, &t.CommentCount, &t.CheckTotal, &t.CheckDone, &fields)
+		&assignees, &tags, &t.SubtaskCount, &t.SubtaskDone, &t.CommentCount, &t.CheckTotal, &t.CheckDone, &fields,
+		&recurrence, &t.BlockedByOpen)
 	if err != nil {
 		return Task{}, err
 	}
@@ -116,6 +126,12 @@ func scanTask(row pgx.Row) (Task, error) {
 	t.Fields = map[string]json.RawMessage{}
 	if err := json.Unmarshal(fields, &t.Fields); err != nil {
 		return Task{}, err
+	}
+	if len(recurrence) > 0 {
+		var r Recurrence
+		if json.Unmarshal(recurrence, &r) == nil {
+			t.Recurrence = &r
+		}
 	}
 	return t, nil
 }
@@ -312,6 +328,12 @@ type TaskDetail struct {
 	// hold only the newest DetailComments / DetailEvents.
 	CommentsTotal int `json:"comments_total"`
 	EventsTotal   int `json:"events_total"`
+	// BlockedBy: tasks this one waits for; Blocking: tasks waiting for it.
+	// The handler removes the ones the caller cannot see and counts them
+	// in HiddenDependencies.
+	BlockedBy          []DepRef `json:"blocked_by"`
+	Blocking           []DepRef `json:"blocking"`
+	HiddenDependencies int      `json:"hidden_dependencies"`
 }
 
 // Detail loads the full task page.
@@ -334,6 +356,9 @@ func (s *Service) Detail(ctx context.Context, id uuid.UUID) (TaskDetail, error) 
 		return d, err
 	}
 	if d.Statuses, err = s.statuses(ctx, s.pool, t.SpaceID); err != nil {
+		return d, err
+	}
+	if d.BlockedBy, d.Blocking, err = s.Dependencies(ctx, id); err != nil {
 		return d, err
 	}
 	// The task page shows the newest comments and events; older ones are
@@ -679,6 +704,8 @@ type TaskPatch struct {
 	TagIDs      *[]uuid.UUID `json:"tag_ids"`
 	// Fields sets custom field values by field id; null clears one.
 	Fields map[uuid.UUID]json.RawMessage `json:"fields"`
+	// Recurrence: {"freq": "weekly", "interval": 2}; null stops repeating.
+	Recurrence NullableRecurrence `json:"recurrence"`
 	Version     *int         `json:"version"`
 }
 
@@ -752,6 +779,13 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 	}
 	if p.DueAt.Set && !validDate(p.DueAt.Value) {
 		issues["due_at"] = "must be YYYY-MM-DD"
+	}
+	if p.Recurrence.Set && p.Recurrence.Value != nil {
+		if cur.ParentID != nil {
+			issues["recurrence"] = "subtasks cannot repeat"
+		} else if err := p.Recurrence.Value.validate(); err != nil {
+			return Task{}, err
+		}
 	}
 	if len(issues) > 0 {
 		return Task{}, httperror.Validation("invalid task", issues)
@@ -971,6 +1005,21 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 			return Task{}, err
 		}
 	}
+	if p.Recurrence.Set && !sameRecurrence(p.Recurrence.Value, cur.Recurrence) {
+		var raw *string
+		var to any
+		if p.Recurrence.Value != nil {
+			b, _ := json.Marshal(p.Recurrence.Value)
+			s := string(b)
+			raw, to = &s, p.Recurrence.Value.Describe()
+		}
+		if _, err := tx.Exec(ctx, `UPDATE tasks SET recurrence = $2::jsonb WHERE id = $1`, id, raw); err != nil {
+			return Task{}, err
+		}
+		if err := addEvent(ctx, tx, id, actor, "recurrence", map[string]any{"to": to}); err != nil {
+			return Task{}, err
+		}
+	}
 	// Atomic optimistic lock: bump only if nobody committed in between the
 	// GetTask above and here. Zero rows means a concurrent writer won; the
 	// transaction rolls back and the caller gets a conflict.
@@ -980,6 +1029,11 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 	}
 	if tag.RowsAffected() == 0 {
 		return Task{}, httperror.Conflict("someone else changed this task — reload and try again")
+	}
+	if statusTrig != nil && statusTrig.category == "done" && cur.Status.Category != "done" {
+		if err := s.spawnRecurrence(ctx, tx, id, &actor); err != nil {
+			return Task{}, err
+		}
 	}
 	// Automations fire inside this transaction, after the patch itself, so
 	// rules see the task as the user left it (TASK-22).
@@ -1087,6 +1141,13 @@ func moveAcrossSpaces(ctx context.Context, tx pgx.Tx, id, targetList, targetSpac
 		}
 	}
 	return nil
+}
+
+func sameRecurrence(a, b *Recurrence) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func sameStr(a, b *string) bool {

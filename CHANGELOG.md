@@ -83,6 +83,17 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   `null` clears). Tasks carry `fields` in every response, changes appear in
   the activity log, values stay behind when a task moves to another space,
   and deleting a field (with all its values) is audited.
+- Dependencies: a task can wait for others (`POST
+  /api/v1/tasks/{task}/dependencies` with `{"depends_on": "KEY-N"}`,
+  `DELETE …/dependencies/{other}`), also across spaces. Circles are
+  refused. Tasks show `blocked_by_open`; the task page lists what it waits
+  for and what waits for it, leaving out tasks you cannot see
+  (`hidden_dependencies`).
+- Recurring tasks: `"recurrence": {"freq": "daily"|"weekly"|"monthly"|"yearly",
+  "interval": n}` on a top-level task. Completing it (by hand or by an
+  automation) creates the next occurrence with start and due dates moved
+  on, the same list, assignees, watchers, tags, custom field values and an
+  unchecked checklist; the rule moves to the new task.
 - Live updates: boards, lists, task pages, the sidebar and the Inbox
   refresh within a second when someone else changes something, over
   Server-Sent Events at `GET /api/v1/stream` (signed in; at most 5 streams

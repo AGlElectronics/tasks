@@ -623,6 +623,10 @@ func (h *taskHandler) getTask(r *http.Request, u *auth.User) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
+	var hiddenA, hiddenB int
+	d.BlockedBy, hiddenA = h.visibleDeps(r, u, d.BlockedBy)
+	d.Blocking, hiddenB = h.visibleDeps(r, u, d.Blocking)
+	d.HiddenDependencies = hiddenA + hiddenB
 	return http.StatusOK, d, nil
 }
 
