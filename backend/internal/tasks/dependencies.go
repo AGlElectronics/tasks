@@ -221,7 +221,7 @@ func (n *NullableRecurrence) UnmarshalJSON(b []byte) error {
 // spawnRecurrence creates the next occurrence of a recurring top-level task
 // that was just completed, inside the caller's transaction. The copy keeps
 // title, description, list, priority, assignees, watchers, tags, custom
-// field values and checklist (unchecked), starts in the space's
+// field values, estimate and checklist (unchecked), starts in the space's
 // first not-started status, and takes over the recurrence rule. Subtasks,
 // comments and attachments are not copied.
 func (s *Service) spawnRecurrence(ctx context.Context, tx pgx.Tx, id uuid.UUID, actor *uuid.UUID) error {
@@ -257,10 +257,10 @@ func (s *Service) spawnRecurrence(ctx context.Context, tx pgx.Tx, id uuid.UUID, 
 	var nextID uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO tasks (space_id, list_id, number, title, description, status_id, priority, start_at, due_at,
-		                   position, created_by, recurrence)
+		                   position, created_by, recurrence, estimate_minutes)
 		SELECT space_id, list_id, $2, title, description, $3, priority,
 		       (start_at + `+step+`)::date, (due_at + `+step+`)::date,
-		       (SELECT COALESCE(max(position), 0) + 1024 FROM tasks WHERE list_id = t.list_id), $4, recurrence
+		       (SELECT COALESCE(max(position), 0) + 1024 FROM tasks WHERE list_id = t.list_id), $4, recurrence, estimate_minutes
 		  FROM tasks t WHERE id = $1
 		RETURNING id`, id, number, statusID, actor, n).Scan(&nextID); err != nil {
 		return err

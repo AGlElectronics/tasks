@@ -94,6 +94,13 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   automation) creates the next occurrence with start and due dates moved
   on, the same list, assignees, watchers, tags, custom field values and an
   unchecked checklist; the rule moves to the new task.
+- Time tracking: log time on a task (`POST /api/v1/tasks/{task}/time` with
+  `minutes`, optional `spent_on` and `note`; `GET …/time`; `DELETE
+  /api/v1/time/{entry}` by the person who logged it or a space manager),
+  set an estimate (`estimate_minutes` on `PATCH /api/v1/tasks/{task}`), and
+  see totals per person for a list (`GET
+  /api/v1/lists/{list}/time-report?from=&to=`). Tasks carry
+  `estimate_minutes` and `time_spent_minutes`.
 - Live updates: boards, lists, task pages, the sidebar and the Inbox
   refresh within a second when someone else changes something, over
   Server-Sent Events at `GET /api/v1/stream` (signed in; at most 5 streams

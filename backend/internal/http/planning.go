@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/AGlElectronics/tasks/backend/internal/auth"
+	"github.com/AGlElectronics/tasks/backend/internal/httperror"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 )
 
@@ -54,6 +55,96 @@ func (h *taskHandler) removeDependency(r *http.Request, u *auth.User) (int, any,
 		return 0, nil, err
 	}
 	return http.StatusNoContent, nil, h.svc.RemoveDependency(r.Context(), u.ID, id, other)
+}
+
+// ----------------------------------------------------------------------------
+// Time tracking: view to read, edit to log; an entry is removed by the
+// person who logged it or a space manager.
+// ----------------------------------------------------------------------------
+
+func (h *taskHandler) listTime(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := h.taskID(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	t, _, err := h.requireTask(r, u, id, tasks.LevelView)
+	if err != nil {
+		return 0, nil, err
+	}
+	out, err := h.svc.TimeEntries(r.Context(), id)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, map[string]any{"entries": out, "total_minutes": t.TimeSpentMinutes, "estimate_minutes": t.EstimateMinutes}, nil
+}
+
+func (h *taskHandler) logTime(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := h.taskID(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, _, err := h.requireTask(r, u, id, tasks.LevelEdit); err != nil {
+		return 0, nil, err
+	}
+	var in tasks.TimeInput
+	if err := decodeJSON(r, &in); err != nil {
+		return 0, nil, err
+	}
+	e, err := h.svc.LogTime(r.Context(), u.ID, id, in)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusCreated, e, nil
+}
+
+func (h *taskHandler) deleteTime(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := parseUUIDParam(r, "entry")
+	if err != nil {
+		return 0, nil, err
+	}
+	e, err := h.svc.GetTimeEntry(r.Context(), id)
+	if err != nil {
+		return 0, nil, err
+	}
+	_, level, err := h.requireTask(r, u, e.TaskID, tasks.LevelEdit)
+	if err != nil {
+		return 0, nil, err
+	}
+	own := e.UserID != nil && *e.UserID == u.ID
+	if !own && level < tasks.LevelManage {
+		return 0, nil, httperror.New(httperror.CodeForbidden, "only the person who logged the time or a space manager can remove it")
+	}
+	return http.StatusNoContent, nil, h.svc.DeleteTimeEntry(r.Context(), u.ID, e)
+}
+
+// listTimeReport serves GET /lists/{list}/time-report?from=&to=.
+func (h *taskHandler) listTimeReport(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := parseUUIDParam(r, "list")
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, _, _, err := h.requireList(r, u, id, tasks.LevelView); err != nil {
+		return 0, nil, err
+	}
+	var from, to *string
+	issues := map[string]string{}
+	for name, dst := range map[string]**string{"from": &from, "to": &to} {
+		if v := r.URL.Query().Get(name); v != "" {
+			if _, err := parseTime(v); err != nil || len(v) != 10 {
+				issues[name] = "must be YYYY-MM-DD"
+				continue
+			}
+			*dst = &v
+		}
+	}
+	if len(issues) > 0 {
+		return 0, nil, httperror.Validation("invalid report range", issues)
+	}
+	rows, total, err := h.svc.ListTimeReport(r.Context(), id, from, to)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, map[string]any{"people": rows, "total_minutes": total}, nil
 }
 
 // visibleDeps drops the dependency ends the caller cannot see.

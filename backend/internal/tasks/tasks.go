@@ -61,6 +61,10 @@ type Task struct {
 	Recurrence *Recurrence `json:"recurrence"`
 	// BlockedByOpen counts the unfinished tasks this one waits for.
 	BlockedByOpen int `json:"blocked_by_open"`
+	// EstimateMinutes is the planned effort; TimeSpentMinutes sums the
+	// logged time.
+	EstimateMinutes  *int `json:"estimate_minutes"`
+	TimeSpentMinutes int  `json:"time_spent_minutes"`
 }
 
 // The per-task aggregates come from lateral joins instead of four
@@ -75,7 +79,7 @@ SELECT t.id, sp.key || '-' || t.number, t.number, t.space_id, t.list_id, l.name,
        COALESCE(asg.people, '[]'::json), COALESCE(tgs.tags, '[]'::json),
        COALESCE(sub.total, 0), COALESCE(sub.done, 0), COALESCE(cmt.n, 0),
        COALESCE(chk.total, 0), COALESCE(chk.done, 0), COALESCE(fvs.m, '{}'::json),
-       t.recurrence, COALESCE(dep.open, 0)
+       t.recurrence, COALESCE(dep.open, 0), t.estimate_minutes, COALESCE(tm.total, 0)
   FROM tasks t
   JOIN spaces sp ON sp.id = t.space_id
   JOIN lists l ON l.id = t.list_id
@@ -101,7 +105,9 @@ SELECT t.id, sp.key || '-' || t.number, t.number, t.space_id, t.list_id, l.name,
   LEFT JOIN LATERAL (
        SELECT count(*) AS open
          FROM task_dependencies d JOIN tasks b ON b.id = d.depends_on JOIN statuses bs ON bs.id = b.status_id
-        WHERE d.task_id = t.id AND b.deleted_at IS NULL AND bs.category <> 'done') dep ON true`
+        WHERE d.task_id = t.id AND b.deleted_at IS NULL AND bs.category <> 'done') dep ON true
+  LEFT JOIN LATERAL (
+       SELECT sum(te.minutes)::int AS total FROM time_entries te WHERE te.task_id = t.id) tm ON true`
 
 func scanTask(row pgx.Row) (Task, error) {
 	var t Task
@@ -111,7 +117,7 @@ func scanTask(row pgx.Row) (Task, error) {
 		&t.Title, &t.Description, &t.Status.ID, &t.Status.Name, &t.Status.Color, &t.Status.Category, &t.Priority,
 		&t.StartAt, &t.DueAt, &t.Position, &t.CompletedAt, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.CreatedBy,
 		&assignees, &tags, &t.SubtaskCount, &t.SubtaskDone, &t.CommentCount, &t.CheckTotal, &t.CheckDone, &fields,
-		&recurrence, &t.BlockedByOpen)
+		&recurrence, &t.BlockedByOpen, &t.EstimateMinutes, &t.TimeSpentMinutes)
 	if err != nil {
 		return Task{}, err
 	}
@@ -334,6 +340,7 @@ type TaskDetail struct {
 	BlockedBy          []DepRef `json:"blocked_by"`
 	Blocking           []DepRef `json:"blocking"`
 	HiddenDependencies int      `json:"hidden_dependencies"`
+	TimeEntries        []TimeEntry `json:"time_entries"`
 }
 
 // Detail loads the full task page.
@@ -359,6 +366,9 @@ func (s *Service) Detail(ctx context.Context, id uuid.UUID) (TaskDetail, error) 
 		return d, err
 	}
 	if d.BlockedBy, d.Blocking, err = s.Dependencies(ctx, id); err != nil {
+		return d, err
+	}
+	if d.TimeEntries, err = s.TimeEntries(ctx, id); err != nil {
 		return d, err
 	}
 	// The task page shows the newest comments and events; older ones are
@@ -497,6 +507,27 @@ func (n *Nullable) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	var v string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Value = &v
+	return nil
+}
+
+// NullableInt is Nullable for integer fields.
+type NullableInt struct {
+	Set   bool
+	Value *int
+}
+
+// UnmarshalJSON records that the field was present.
+func (n *NullableInt) UnmarshalJSON(b []byte) error {
+	n.Set = true
+	if string(b) == "null" {
+		n.Value = nil
+		return nil
+	}
+	var v int
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
 	}
@@ -706,6 +737,8 @@ type TaskPatch struct {
 	Fields map[uuid.UUID]json.RawMessage `json:"fields"`
 	// Recurrence: {"freq": "weekly", "interval": 2}; null stops repeating.
 	Recurrence NullableRecurrence `json:"recurrence"`
+	// EstimateMinutes: planned effort; null clears it.
+	EstimateMinutes NullableInt `json:"estimate_minutes"`
 	Version     *int         `json:"version"`
 }
 
@@ -779,6 +812,9 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 	}
 	if p.DueAt.Set && !validDate(p.DueAt.Value) {
 		issues["due_at"] = "must be YYYY-MM-DD"
+	}
+	if p.EstimateMinutes.Set && p.EstimateMinutes.Value != nil && (*p.EstimateMinutes.Value < 0 || *p.EstimateMinutes.Value > 1_000_000) {
+		issues["estimate_minutes"] = "0 to 1000000"
 	}
 	if p.Recurrence.Set && p.Recurrence.Value != nil {
 		if cur.ParentID != nil {
@@ -1005,6 +1041,14 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 			return Task{}, err
 		}
 	}
+	if p.EstimateMinutes.Set && !sameInt(p.EstimateMinutes.Value, cur.EstimateMinutes) {
+		if _, err := tx.Exec(ctx, `UPDATE tasks SET estimate_minutes = $2 WHERE id = $1`, id, p.EstimateMinutes.Value); err != nil {
+			return Task{}, err
+		}
+		if err := addEvent(ctx, tx, id, actor, "estimate", map[string]any{"from": cur.EstimateMinutes, "to": p.EstimateMinutes.Value}); err != nil {
+			return Task{}, err
+		}
+	}
 	if p.Recurrence.Set && !sameRecurrence(p.Recurrence.Value, cur.Recurrence) {
 		var raw *string
 		var to any
@@ -1141,6 +1185,13 @@ func moveAcrossSpaces(ctx context.Context, tx pgx.Tx, id, targetList, targetSpac
 		}
 	}
 	return nil
+}
+
+func sameInt(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func sameRecurrence(a, b *Recurrence) bool {
