@@ -15,8 +15,10 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"github.com/AGlElectronics/tasks/backend/internal/authbase"
 	"github.com/AGlElectronics/tasks/backend/internal/clientip"
 	"github.com/AGlElectronics/tasks/backend/internal/denlink"
+	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
 )
 
@@ -24,14 +26,18 @@ import (
 //
 //   - AuthModeDev reads an X-Dev-User header (identity) and an X-Dev-Groups
 //     header (simulated IdP groups) and provisions a local user tied to the
-//     "dev" issuer. Only safe for local scaffolding and CI.
-//   - AuthModeOIDC verifies a Bearer JWT via the configured issuer.
-type AuthMode string
+//     "dev" issuer. Only allowed with APP_ENV=development (authbase).
+//   - AuthModeOIDC verifies a Bearer access token via the configured issuer.
+type AuthMode = authbase.AuthMode
 
 const (
-	AuthModeOIDC AuthMode = "oidc"
-	AuthModeDev  AuthMode = "dev"
+	AuthModeOIDC = authbase.AuthOIDC
+	AuthModeDev  = authbase.AuthDev
 )
+
+// DefaultOIDCAudience is the audience of the access tokens Keycloak issues
+// for the Tasks API (the token contract's audience mapper on tasks-spa).
+const DefaultOIDCAudience = "tasks-api"
 
 // Config is the validated process configuration.
 type Config struct {
@@ -44,17 +50,24 @@ type Config struct {
 	DatabaseURL string
 
 	// Auth
-	AuthMode         AuthMode
-	OIDCIssuerURL    string
-	OIDCClientID     string
+	AuthMode      AuthMode
+	OIDCIssuerURL string
+	// OIDCAudience is the aud an access token must carry (OIDC_AUDIENCE,
+	// default tasks-api).
 	OIDCAudience     string
 	AccessConfigPath string
 	DevDefaultUser   string
 	DevDefaultGroups []string
+	// Groups is the shared group matching rule (OIDC_GROUPS_CLAIM,
+	// OIDC_GROUP_MATCH, OIDC_GROUP_PREFIX).
+	Groups groupmatch.Config
 
 	// TasksServiceToken protects /api/internal/* (service-to-service calls
 	// from HR). Empty disables those routes.
 	TasksServiceToken string
+	// HRServiceToken lets HR read GET /api/role-catalog without a sign-in.
+	// Empty: only signed-in staff can read it.
+	HRServiceToken string
 
 	// S3 (attachments, TASK-7). Optional: with S3_ENDPOINT unset the API
 	// answers "attachments are not configured" and everything else works.
@@ -83,11 +96,10 @@ type Config struct {
 
 	// Brand provider
 	BrandLocalPath string // optional brand.json; Den's brand overlays it once paired
-	// DenInternalURL replaces the host of pasted Den pairing URLs (Docker).
-	DenInternalURL string
-	// DenMode is DEN_MODE: required keeps the API locked until the module
-	// is paired with Den; standalone (the default) does not.
-	DenMode denlink.Mode
+	// Den is the pairing configuration (DEN_MODE, DEN_INTERNAL_URL,
+	// DEN_ALLOWED_HOSTS, DEN_LINK_ENCRYPTION_KEY…). Den.Version is set by
+	// the app at start-up.
+	Den denlink.Config
 
 	// HTTP
 	CORSAllowedOrigins []string
@@ -104,10 +116,16 @@ type Config struct {
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
+	// The shared packages read their own settings; validate() reports
+	// their errors together with ours.
+	// Fail closed: a deployment that sets neither APP_ENV nor AUTH_MODE
+	// runs as production with OIDC, never with trusted dev headers.
+	ab, _ := authbase.FromEnv(os.Getenv)
+	groups, _ := groupmatch.FromEnv(os.Getenv)
+	den, _ := denlink.FromEnv("tasks", "", os.Getenv)
+
 	cfg := &Config{
-		// Fail closed: a deployment that sets neither APP_ENV nor AUTH_MODE
-		// runs as production with OIDC, never with trusted dev headers.
-		AppEnv: getEnv("APP_ENV", "production"),
+		AppEnv: ab.AppEnv,
 		// Container-internal defaults: every module in the ecosystem binds
 		// :8080 inside its container. Host-side port mapping (host 8160 ->
 		// container 8080 for Tasks) is handled by docker-compose / K8s.
@@ -116,15 +134,16 @@ func Load() (*Config, error) {
 
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 
-		AuthMode:         AuthMode(getEnv("AUTH_MODE", string(AuthModeOIDC))),
+		AuthMode:         ab.AuthMode,
 		OIDCIssuerURL:    getEnv("OIDC_ISSUER_URL", ""),
-		OIDCClientID:     getEnv("OIDC_CLIENT_ID", ""),
-		OIDCAudience:     getEnv("OIDC_AUDIENCE", ""),
+		OIDCAudience:     getEnv("OIDC_AUDIENCE", DefaultOIDCAudience),
 		AccessConfigPath: getEnv("ACCESS_CONFIG_PATH", ""),
 		DevDefaultUser:   getEnv("DEV_DEFAULT_USER", "dev-admin"),
 		DevDefaultGroups: splitCSV(getEnv("DEV_DEFAULT_GROUPS", "tasks-admin")),
+		Groups:           groups,
 
-		TasksServiceToken: getEnv("TASKS_SERVICE_TOKEN", ""),
+		TasksServiceToken: strings.TrimSpace(getEnv("TASKS_SERVICE_TOKEN", "")),
+		HRServiceToken:    strings.TrimSpace(getEnv("HR_SERVICE_TOKEN", "")),
 
 		S3Endpoint:        getEnv("S3_ENDPOINT", ""),
 		S3Bucket:          getEnv("S3_BUCKET", "tasks-data-dev"),
@@ -143,8 +162,7 @@ func Load() (*Config, error) {
 		PublicBaseURL: strings.TrimRight(getEnv("TASKS_PUBLIC_URL", ""), "/"),
 
 		BrandLocalPath: getEnv("BRAND_LOCAL_PATH", ""),
-		DenInternalURL: getEnv("DEN_INTERNAL_URL", ""),
-		DenMode:        denlink.Mode(getEnv("DEN_MODE", string(denlink.ModeStandalone))),
+		Den:            den,
 
 		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3009")),
 		ShutdownTimeout:    getEnvDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
@@ -168,26 +186,21 @@ func (c *Config) validate() error {
 	if c.DatabaseURL == "" {
 		errs = append(errs, "DATABASE_URL is required")
 	}
-	if err := c.DenMode.Validate(); err != nil {
+	if err := c.Den.Validate(); err != nil {
 		errs = append(errs, err.Error())
 	}
-
-	switch c.AuthMode {
-	case AuthModeOIDC:
+	if err := c.Groups.Validate(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := c.Auth().Validate(); err != nil {
+		errs = append(errs, err.Error())
+	} else if c.AuthMode != AuthModeDev {
 		if c.OIDCIssuerURL == "" {
 			errs = append(errs, "OIDC_ISSUER_URL is required when AUTH_MODE=oidc")
 		}
-		if c.OIDCClientID == "" {
-			errs = append(errs, "OIDC_CLIENT_ID is required when AUTH_MODE=oidc")
+		if c.OIDCAudience == "" {
+			errs = append(errs, "OIDC_AUDIENCE must not be empty when AUTH_MODE=oidc")
 		}
-	case AuthModeDev:
-		// Dev mode trusts X-Dev-User / X-Dev-Groups headers, so it must
-		// never run outside development: anyone could impersonate an admin.
-		if c.AppEnv != "development" {
-			errs = append(errs, fmt.Sprintf("AUTH_MODE=dev is only allowed when APP_ENV=development (got APP_ENV=%q); set AUTH_MODE=oidc", c.AppEnv))
-		}
-	default:
-		errs = append(errs, fmt.Sprintf("AUTH_MODE must be 'oidc' or 'dev', got %q", c.AuthMode))
 	}
 
 	switch c.SMTPSecurity {
@@ -215,6 +228,11 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+// Auth is the shared AUTH_MODE/APP_ENV guard for this configuration.
+func (c *Config) Auth() authbase.Config {
+	return authbase.Config{AppEnv: c.AppEnv, AuthMode: c.AuthMode}
 }
 
 // SMTP is Tasks' own SMTP settings (used when Den sends none).

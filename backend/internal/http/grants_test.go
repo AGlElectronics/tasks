@@ -8,6 +8,8 @@ import (
 
 	"github.com/pressly/goose/v3"
 
+	"github.com/AGlElectronics/tasks/backend/internal/config"
+	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
 	"github.com/AGlElectronics/tasks/backend/migrations"
 )
 
@@ -67,6 +69,58 @@ func TestGroupGrantsMatchNormalised(t *testing.T) {
 		t.Fatalf("want a revoked audit row, got %d (%v)", n, err)
 	}
 	h.must(as{user: "member", groups: "dept-security"}, "GET", "/api/v1/spaces/"+spaceID, nil, 404)
+}
+
+// TestGroupGrantsPrefixAndLast: OIDC_GROUP_PREFIX and OIDC_GROUP_MATCH=last
+// apply to grants and to access-config bindings alike.
+func TestGroupGrantsPrefixAndLast(t *testing.T) {
+	h := newHarnessWith(t, func(c *config.Config) {
+		c.Groups = groupmatch.Config{Mode: groupmatch.ModeLast, Prefix: "/Con2026"}
+	})
+	alice := as{user: "alice", groups: "/con2026/tasks-creator"}
+	sp := h.must(alice, "POST", "/api/v1/spaces", map[string]any{"name": "Security", "key": "SEC"}, 201)
+	spaceID := str(sp, "id")
+	h.must(alice, "PUT", "/api/v1/spaces/"+spaceID+"/grants",
+		map[string]any{"subject_type": "group", "subject": "/Departments/Security", "level": "view"}, 200)
+
+	for _, groups := range []string{"/con2026/departments/security", "/teams/Security", "security"} {
+		h.must(as{user: "member", groups: groups}, "GET", "/api/v1/spaces/"+spaceID, nil, 200)
+	}
+	for _, groups := range []string{"/con2026", "/departments/security-lead", ""} {
+		h.must(as{user: "outsider", groups: groups}, "GET", "/api/v1/spaces/"+spaceID, nil, 404)
+	}
+	sidebar := h.must(as{user: "member", groups: "/teams/security"}, "GET", "/api/v1/spaces", nil, 200)
+	if n := len(sidebar["spaces"].([]any)); n != 1 {
+		t.Fatalf("the sidebar should list the granted space, got %d", n)
+	}
+}
+
+// TestGroupKeySQLMatchesGo: tasks_group_key on a stored subject_key gives
+// what groupmatch.Config.Key gives for the name the admin typed.
+func TestGroupKeySQLMatchesGo(t *testing.T) {
+	h := newHarness(t)
+	names := []string{"den-admin", " /Departments/Security ", "/con2026/den-admin", "/con2026", "con2026/x/",
+		"/con2025/den-admin", "departments/security/", "//double", "/CON2026/Teams/Bar", "a/b/c"}
+	for _, tc := range []struct {
+		c            groupmatch.Config
+		prefix, mode string // as groupMatchArgs passes them (tested in package tasks)
+	}{
+		{groupmatch.Config{}, "", "full"},
+		{groupmatch.Config{Mode: groupmatch.ModeLast}, "", "last"},
+		{groupmatch.Config{Prefix: "/con2026"}, "con2026", "full"},
+		{groupmatch.Config{Prefix: "con2026/", Mode: groupmatch.ModeLast}, "con2026", "last"},
+	} {
+		for _, n := range names {
+			var got string
+			if err := h.pool.QueryRow(context.Background(), `SELECT tasks_group_key($1, $2, $3)`,
+				groupmatch.NewGrant(n).Stored, tc.prefix, tc.mode).Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if want := tc.c.Key(n); got != want {
+				t.Errorf("%+v %q: SQL %q, Go %q", tc.c, n, got, want)
+			}
+		}
+	}
 }
 
 // TestGrantSubjectKeyBackfill runs the migration over grants written before

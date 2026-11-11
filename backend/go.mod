@@ -13,7 +13,6 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/rs/zerolog v1.35.1
-	golang.org/x/time v0.8.0
 )
 
 require (

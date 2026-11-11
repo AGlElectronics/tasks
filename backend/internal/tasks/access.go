@@ -66,7 +66,7 @@ type Grant struct {
 	// Subject is the user id, or the group name as the admin typed it.
 	Subject string `json:"subject"`
 	// SubjectKey is what grants match on: the user id, or the normalised
-	// group name (see GroupKey).
+	// group name (groupmatch.NewGrant(...).Stored; see groups.go).
 	SubjectKey string `json:"subject_key"`
 	// DisplayName resolves user subjects for the UI; groups show verbatim.
 	DisplayName string `json:"display_name"`
@@ -138,7 +138,7 @@ func (s *Service) PutGrant(ctx context.Context, actor uuid.UUID, scope GrantScop
 			}
 		}
 	}
-	if in.SubjectType == "group" && GroupKey(in.Subject) == "" {
+	if in.SubjectType == "group" && subjectKey("group", in.Subject) == "" {
 		issues["subject"] = "required"
 	}
 	if len(issues) > 0 {
@@ -225,12 +225,14 @@ func (s *Service) DeleteGrant(ctx context.Context, actor, id uuid.UUID, scope Gr
 // on a space or on a list (one query).
 func (s *Service) grantedLevel(ctx context.Context, scope GrantScope, userID uuid.UUID, groups []string) (Level, error) {
 	var lvl int
+	keys, prefix, mode := groupMatchArgs(s.groups, groups)
 	err := s.pool.QueryRow(ctx, `
 		SELECT COALESCE(max(CASE level WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'manage' THEN 3 END), 0)
 		  FROM access_grants
-		 WHERE ((subject_type = 'user' AND subject_key = $3::text) OR (subject_type = 'group' AND subject_key = ANY($4)))
+		 WHERE ((subject_type = 'user' AND subject_key = $3::text)
+		        OR (subject_type = 'group' AND tasks_group_key(subject_key, $5, $6) = ANY($4)))
 		   AND (($1::uuid IS NOT NULL AND space_id = $1) OR ($2::uuid IS NOT NULL AND list_id = $2))`,
-		scope.SpaceID, scope.ListID, userID.String(), groupKeys(groups)).Scan(&lvl)
+		scope.SpaceID, scope.ListID, userID.String(), keys, prefix, mode).Scan(&lvl)
 	return Level(lvl), err
 }
 
@@ -264,11 +266,13 @@ type UserAccess struct {
 // AccessFor loads every grant that applies to the user in one query.
 func (s *Service) AccessFor(ctx context.Context, userID uuid.UUID, groups []string) (UserAccess, error) {
 	acc := UserAccess{SpaceLevels: map[uuid.UUID]Level{}, ListLevels: map[uuid.UUID]Level{}}
+	keys, prefix, mode := groupMatchArgs(s.groups, groups)
 	rows, err := s.pool.Query(ctx, `
 		SELECT space_id, list_id, max(CASE level WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'manage' THEN 3 END)
 		  FROM access_grants
-		 WHERE (subject_type = 'user' AND subject_key = $1::text) OR (subject_type = 'group' AND subject_key = ANY($2))
-		 GROUP BY space_id, list_id`, userID.String(), groupKeys(groups))
+		 WHERE (subject_type = 'user' AND subject_key = $1::text)
+		    OR (subject_type = 'group' AND tasks_group_key(subject_key, $3, $4) = ANY($2))
+		 GROUP BY space_id, list_id`, userID.String(), keys, prefix, mode)
 	if err != nil {
 		return acc, err
 	}

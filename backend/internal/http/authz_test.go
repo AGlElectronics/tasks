@@ -338,7 +338,7 @@ func TestDevModeRefusedOutsideDevelopment(t *testing.T) {
 	t.Setenv("AUTH_MODE", "dev")
 	t.Setenv("DATABASE_URL", "postgres://x:x@localhost/x")
 	_, err := config.Load()
-	if err == nil || !strings.Contains(err.Error(), "AUTH_MODE=dev is only allowed") {
+	if err == nil || !strings.Contains(err.Error(), "only allowed with APP_ENV=development") {
 		t.Fatalf("want fail-closed config error, got %v", err)
 	}
 }

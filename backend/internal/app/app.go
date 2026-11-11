@@ -69,7 +69,7 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("init oidc verifier: %w", err)
 		}
-		logger.Info().Str("issuer", cfg.OIDCIssuerURL).Msg("oidc verifier ready")
+		logger.Info().Str("issuer", cfg.OIDCIssuerURL).Str("audience", cfg.OIDCAudience).Msg("oidc verifier ready")
 	}
 
 	// Access config catalog. A bogus ACCESS_CONFIG_PATH fails loudly; no
@@ -90,7 +90,11 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 	}
 
 	brandProvider := brand.New(cfg)
-	den := denlink.New(pool, denlink.Config{Slug: "tasks", Version: Version, InternalURL: cfg.DenInternalURL, Mode: cfg.DenMode}, logger)
+	cfg.Den.Version = Version
+	den, err := denlink.Open(pool, cfg.Den, logger)
+	if err != nil {
+		return fmt.Errorf("den link: %w", err)
+	}
 	if err := den.Restore(ctx); err != nil {
 		logger.Warn().Err(err).Msg("den link: load failed")
 	}
@@ -114,6 +118,7 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 	jobs := tasks.NewService(pool)
 	jobs.SetEnvSMTP(cfg.SMTP())
 	jobs.SetPublicURL(cfg.PublicBaseURL)
+	jobs.SetGroupMatch(cfg.Groups)
 	if cfg.SMTPHost != "" {
 		logger.Info().Str("host", cfg.SMTPHost).Msg("own SMTP configured (Den's SMTP wins when paired and sent)")
 	}

@@ -1,33 +1,39 @@
 package tasks
 
-import "strings"
+import (
+	"strings"
 
-// GroupKey is the form an IdP group name is stored and compared in: spaces
-// trimmed, one leading '/' (Keycloak's full-path form) removed,
-// lower-cased. The whole path must match, so "/departments/security"
-// matches "departments/security" but not "security".
-//
-// TODO(shared/groupmatch): replace with groupmatch.Config.Key once the
-// shared module is adopted (it adds OIDC_GROUP_PREFIX and OIDC_GROUP_MATCH).
-func GroupKey(name string) string {
-	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(name), "/"))
-}
+	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
+)
 
-// groupKeys normalises a person's groups for matching against subject_key.
-func groupKeys(groups []string) []string {
-	out := make([]string, 0, len(groups))
-	for _, g := range groups {
-		if k := GroupKey(g); k != "" {
-			out = append(out, k)
-		}
-	}
-	return out
-}
+// Group grants follow the shared group rule (groupmatch). subject_key holds
+// groupmatch.NewGrant(subject).Stored: trimmed, one leading '/' removed,
+// lower-cased; subject keeps what the admin typed. Matching compares
+// groupmatch.Config.Key of the person's groups with the same transform of
+// subject_key, done in SQL by tasks_group_key (migration
+// 20261111000010_group_key_function.sql).
 
 // subjectKey is the subject_key column for a grant subject.
 func subjectKey(subjectType, subject string) string {
 	if subjectType == "group" {
-		return GroupKey(subject)
+		return groupmatch.NewGrant(subject).Stored
 	}
 	return subject
+}
+
+// groupMatchArgs are the SQL arguments for tasks_group_key(subject_key,
+// prefix, mode) = ANY(keys): the person's group keys under c, and c's
+// prefix and mode in the form groupmatch compares them.
+func groupMatchArgs(c groupmatch.Config, groups []string) (keys []string, prefix, mode string) {
+	keys = make([]string, 0, len(groups))
+	for _, g := range groups {
+		if k := c.Key(g); k != "" {
+			keys = append(keys, k)
+		}
+	}
+	mode = string(groupmatch.ModeFull)
+	if c.Mode == groupmatch.ModeLast {
+		mode = string(groupmatch.ModeLast)
+	}
+	return keys, strings.TrimSuffix(groupmatch.Normalize(c.Prefix), "/"), mode
 }

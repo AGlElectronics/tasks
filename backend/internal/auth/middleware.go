@@ -15,19 +15,21 @@ import (
 //   - AuthModeDev reads X-Dev-User (identity; default DEV_DEFAULT_USER) and
 //     X-Dev-Groups (comma-separated simulated IdP groups; default
 //     DEV_DEFAULT_GROUPS) and provisions a local user under the reserved
-//     "dev" issuer. Not for production.
-//   - AuthModeOIDC verifies the Authorization: Bearer <JWT>, then
+//     "dev" issuer. Only with APP_ENV=development; otherwise the headers
+//     are ignored (and stripped by the router).
+//   - AuthModeOIDC verifies the Authorization: Bearer <access token>, then
 //     provisions/refreshes the user from (issuer, subject).
 //
 // On any failure the request is terminated with a typed JSON error; no
 // handler further down the chain sees an unauthenticated request.
 func Middleware(cfg *config.Config, resolver *Resolver, oidcVerifier *OIDCVerifier) func(http.Handler) http.Handler {
+	devAuth := cfg.Auth().DevAuth()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			switch cfg.AuthMode {
-			case config.AuthModeDev:
+			switch {
+			case devAuth:
 				name := r.Header.Get("X-Dev-User")
 				if name == "" {
 					name = cfg.DevDefaultUser
@@ -44,14 +46,14 @@ func Middleware(cfg *config.Config, resolver *Resolver, oidcVerifier *OIDCVerifi
 				}
 				ctx = WithUser(ctx, user)
 
-			case config.AuthModeOIDC:
-				if oidcVerifier == nil {
-					httperror.Render(w, r, httperror.Internal(nil))
-					return
-				}
+			case cfg.AuthMode == config.AuthModeOIDC:
 				bearer := bearerFromHeader(r.Header.Get("Authorization"))
 				if bearer == "" {
 					httperror.Render(w, r, httperror.New(httperror.CodeUnauthorized, "missing bearer token"))
+					return
+				}
+				if oidcVerifier == nil {
+					httperror.Render(w, r, httperror.Internal(nil))
 					return
 				}
 				claims, err := oidcVerifier.Verify(ctx, bearer)

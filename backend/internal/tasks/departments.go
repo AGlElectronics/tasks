@@ -135,7 +135,7 @@ func (s *Service) ensureDepartmentSpace(ctx context.Context, orgID uuid.UUID, in
 		VALUES ($1, 'group', $2, $3, 'edit')
 		ON CONFLICT (space_id, subject_type, subject_key) WHERE space_id IS NOT NULL
 		DO UPDATE SET level = EXCLUDED.level
-		RETURNING id`, id, in.Group, GroupKey(in.Group)).Scan(&grantID); err != nil {
+		RETURNING id`, id, in.Group, subjectKey("group", in.Group)).Scan(&grantID); err != nil {
 		return Space{}, false, err
 	}
 	if err := writeAudit(ctx, tx, nil, "grant", grantID, "granted", map[string]any{

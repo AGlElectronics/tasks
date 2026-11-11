@@ -30,6 +30,10 @@ const (
 	// from a bug.
 	CodeUnavailable Code = "unavailable"
 	CodeInternal    Code = "internal"
+	// CodeTooLarge and CodeUnsupportedMediaType come from
+	// authbase.DecodeJSON.
+	CodeTooLarge             Code = "request_too_large"
+	CodeUnsupportedMediaType Code = "unsupported_media_type"
 )
 
 // Error is the canonical service error. Services return *Error or wrap one
@@ -147,6 +151,10 @@ func statusFor(code Code) int {
 		return http.StatusConflict
 	case CodeUnavailable:
 		return http.StatusServiceUnavailable
+	case CodeTooLarge:
+		return http.StatusRequestEntityTooLarge
+	case CodeUnsupportedMediaType:
+		return http.StatusUnsupportedMediaType
 	default:
 		return http.StatusInternalServerError
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AGlElectronics/tasks/backend/internal/domain"
+	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
 )
@@ -27,7 +28,13 @@ type Service struct {
 	envSMTP mail.Config
 	// publicURL is TASKS_PUBLIC_URL, for links in emails.
 	publicURL string
+	// groups is the shared group matching rule for group grants.
+	groups groupmatch.Config
 }
+
+// SetGroupMatch sets the group matching rule (OIDC_GROUP_MATCH,
+// OIDC_GROUP_PREFIX) used for group grants.
+func (s *Service) SetGroupMatch(c groupmatch.Config) { s.groups = c }
 
 // SetPublicURL sets the web app address used for links in emails.
 func (s *Service) SetPublicURL(u string) { s.publicURL = strings.TrimRight(u, "/") }

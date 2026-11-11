@@ -3,13 +3,15 @@ package http
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/AGlElectronics/tasks/backend/internal/authbase"
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
+	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 )
 
 // writeJSON serializes body with the standard content-type. Errors on the
@@ -38,22 +40,31 @@ func decodeJSONLenient(r *http.Request, dst any) error {
 	return decode(r, dst, false)
 }
 
+// decode reads one JSON value with authbase.DecodeJSON under the route's
+// body cap. The ResponseWriter is nil: the router's body limit already
+// wrapped r.Body with the real one, which closes the connection on overflow.
 func decode(r *http.Request, dst any, strict bool) error {
-	dec := json.NewDecoder(r.Body)
-	if strict {
-		dec.DisallowUnknownFields()
+	err := authbase.DecodeJSON(nil, r, dst, authbase.DecodeOptions{MaxBytes: bodyLimit(r), DisallowUnknownFields: strict})
+	var de *authbase.DecodeError
+	if errors.As(err, &de) {
+		return httperror.New(httperror.Code(de.Code), de.Message)
 	}
-	if err := dec.Decode(dst); err != nil {
-		if errors.Is(err, io.EOF) {
-			return httperror.BadRequest("request body is empty")
+	return err
+}
+
+// bodyLimit is the request body cap: 1 MiB, more for attachment uploads
+// (TASK-7) and imports, which carry files.
+func bodyLimit(r *http.Request) int64 {
+	if r.Method == http.MethodPost {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/attachments"):
+			return maxAttachmentSize + authbase.DefaultMaxBodyBytes
+		case strings.HasSuffix(r.URL.Path, "/import"):
+			// JSON-escaping can grow the 5 MB file a little.
+			return 2*tasks.MaxImportBytes + authbase.DefaultMaxBodyBytes
 		}
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			return httperror.BadRequest("request body is too large")
-		}
-		return httperror.BadRequest("invalid JSON: " + err.Error())
 	}
-	return nil
+	return authbase.DefaultMaxBodyBytes
 }
 
 // chiParam returns a raw chi URL parameter.

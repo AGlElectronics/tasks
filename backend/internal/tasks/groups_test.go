@@ -1,8 +1,14 @@
 package tasks
 
-import "testing"
+import (
+	"slices"
+	"testing"
 
-func TestGroupKey(t *testing.T) {
+	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
+)
+
+// subject_key must stay exactly what migration 20261111000001 backfilled.
+func TestSubjectKey(t *testing.T) {
 	cases := map[string]string{
 		"dept-security":         "dept-security",
 		"  /Dept-Security ":     "dept-security",
@@ -13,14 +19,23 @@ func TestGroupKey(t *testing.T) {
 		"   ":                   "",
 	}
 	for in, want := range cases {
-		if got := GroupKey(in); got != want {
-			t.Errorf("GroupKey(%q) = %q, want %q", in, got, want)
+		if got := subjectKey("group", in); got != want {
+			t.Errorf("subjectKey(group, %q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := groupKeys([]string{"/A", "", " b "}); len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Errorf("groupKeys dropped or kept the wrong names: %v", got)
+	if subjectKey("user", "ABC") != "ABC" {
+		t.Error("user subjects stay verbatim")
 	}
-	if subjectKey("user", "ABC") != "ABC" || subjectKey("group", "/ABC") != "abc" {
-		t.Error("subjectKey: users stay verbatim, groups are normalised")
+}
+
+func TestGroupMatchArgs(t *testing.T) {
+	keys, prefix, mode := groupMatchArgs(groupmatch.Config{}, []string{"/A", "", " b "})
+	if !slices.Equal(keys, []string{"a", "b"}) || prefix != "" || mode != "full" {
+		t.Errorf("default rule: keys %v prefix %q mode %q", keys, prefix, mode)
+	}
+	c := groupmatch.Config{Mode: groupmatch.ModeLast, Prefix: "/Con2026/"}
+	keys, prefix, mode = groupMatchArgs(c, []string{"/con2026/departments/Security", "/con2026", "/other/x"})
+	if !slices.Equal(keys, []string{"security", "x"}) || prefix != "con2026" || mode != "last" {
+		t.Errorf("prefix+last: keys %v prefix %q mode %q", keys, prefix, mode)
 	}
 }

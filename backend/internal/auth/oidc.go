@@ -9,6 +9,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 
 	"github.com/AGlElectronics/tasks/backend/internal/config"
+	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
 )
 
 // OIDCVerifier wraps the go-oidc verifier and exposes the subset of token
@@ -17,39 +18,38 @@ import (
 type OIDCVerifier struct {
 	verifier *oidc.IDTokenVerifier
 	issuer   string
+	groups   groupmatch.Config
 }
 
-// OIDCClaims is the parsed claim subset Tasks stores. We try the standard
-// claim names first and fall back to common Keycloak shapes.
+// OIDCClaims is the parsed claim subset Tasks stores.
 type OIDCClaims struct {
-	Issuer            string   `json:"iss"`
-	Subject           string   `json:"sub"`
-	Email             string   `json:"email"`
-	PreferredUsername string   `json:"preferred_username"`
-	Name              string   `json:"name"`
-	Nickname          string   `json:"nickname"`
-	Groups            []string `json:"groups"`
-	Roles             []string `json:"roles"`
+	Issuer            string `json:"iss"`
+	Subject           string `json:"sub"`
+	Email             string `json:"email"`
+	PreferredUsername string `json:"preferred_username"`
+	Name              string `json:"name"`
+	Nickname          string `json:"nickname"`
+	// Groups come only from the claim named by OIDC_GROUPS_CLAIM
+	// (groupmatch); the roles claim is never merged in.
+	Groups []string `json:"-"`
 }
 
-// NewOIDCVerifier runs OIDC discovery and returns a verifier configured for
-// Tasks's audience. Call once at startup; the returned object is safe for
+// NewOIDCVerifier runs OIDC discovery and returns a verifier for access
+// tokens whose aud contains OIDC_AUDIENCE (tasks-api by default; see the
+// token contract). Call once at startup; the returned object is safe for
 // concurrent use.
 func NewOIDCVerifier(ctx context.Context, cfg *config.Config) (*OIDCVerifier, error) {
-	if cfg.OIDCIssuerURL == "" || cfg.OIDCClientID == "" {
-		return nil, errors.New("OIDC verifier requires OIDC_ISSUER_URL and OIDC_CLIENT_ID")
+	if cfg.OIDCIssuerURL == "" || cfg.OIDCAudience == "" {
+		return nil, errors.New("OIDC verifier requires OIDC_ISSUER_URL and OIDC_AUDIENCE")
 	}
 	provider, err := oidc.NewProvider(ctx, cfg.OIDCIssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery: %w", err)
 	}
-	audience := cfg.OIDCAudience
-	if audience == "" {
-		audience = cfg.OIDCClientID
-	}
 	return &OIDCVerifier{
-		verifier: provider.Verifier(&oidc.Config{ClientID: audience}),
+		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.OIDCAudience}),
 		issuer:   cfg.OIDCIssuerURL,
+		groups:   cfg.Groups,
 	}, nil
 }
 
@@ -61,39 +61,25 @@ func (v *OIDCVerifier) Verify(ctx context.Context, bearer string) (*OIDCClaims, 
 	if bearer == "" {
 		return nil, errors.New("missing bearer token")
 	}
-	idToken, err := v.verifier.Verify(ctx, bearer)
+	token, err := v.verifier.Verify(ctx, bearer)
 	if err != nil {
 		return nil, fmt.Errorf("verify token: %w", err)
 	}
 	var c OIDCClaims
-	if err := idToken.Claims(&c); err != nil {
+	if err := token.Claims(&c); err != nil {
 		return nil, fmt.Errorf("parse claims: %w", err)
 	}
 	if c.Subject == "" {
 		return nil, errors.New("token missing sub claim")
 	}
+	var raw map[string]any
+	if err := token.Claims(&raw); err != nil {
+		return nil, fmt.Errorf("parse claims: %w", err)
+	}
+	c.Groups = v.groups.Groups(raw)
 	// Pin the issuer to what the verifier was configured with. Keycloak
 	// token issuers include trailing /realm paths; always use what we
 	// trust, not what the token asserts.
 	c.Issuer = v.issuer
-	// Many IdPs expose `roles` rather than `groups`; treat both as role-ish
-	// strings for the access config binding lookup.
-	c.Groups = mergeUnique(c.Groups, c.Roles)
 	return &c, nil
-}
-
-func mergeUnique(a, b []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(a)+len(b))
-	for _, v := range append(append([]string{}, a...), b...) {
-		if v == "" {
-			continue
-		}
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-	}
-	return out
 }

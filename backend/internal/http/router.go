@@ -7,7 +7,8 @@
 // con-services; the routes below are the source of truth):
 //
 //	GET /livez, /readyz, /api/health — probes and status (unauthenticated)
-//	GET /api/den/state, /api/role-catalog, /api/v1/brand — public
+//	GET /api/den/state, /api/v1/brand — public
+//	GET /api/role-catalog — HR (HR_SERVICE_TOKEN) or any signed-in person
 //	POST /api/internal/departments — HR department hook (TASKS_SERVICE_TOKEN)
 //	/api/v1/me, /me/preferences, /me/notifications — the signed-in person
 //	/api/v1/spaces…, /lists…, /tasks… — spaces, statuses, lists, grants,
@@ -26,7 +27,6 @@ package http
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -37,6 +37,7 @@ import (
 	"github.com/rs/zerolog/hlog"
 
 	"github.com/AGlElectronics/tasks/backend/internal/auth"
+	"github.com/AGlElectronics/tasks/backend/internal/authbase"
 	"github.com/AGlElectronics/tasks/backend/internal/brand"
 	"github.com/AGlElectronics/tasks/backend/internal/clientip"
 	"github.com/AGlElectronics/tasks/backend/internal/config"
@@ -73,7 +74,9 @@ const streamPath = "/api/v1/stream"
 // Version is passed in from cmd/server at build time.
 func NewRouter(deps Deps, version string) http.Handler {
 	r := chi.NewRouter()
+	authCfg := deps.Config.Auth()
 
+	r.Use(authCfg.StripDevHeaders)
 	r.Use(chimiddleware.RequestID)
 	r.Use(clientip.Middleware(deps.Config.TrustedProxyCIDRs))
 	r.Use(chimiddleware.Recoverer)
@@ -88,20 +91,12 @@ func NewRouter(deps Deps, version string) http.Handler {
 			limited.ServeHTTP(w, req)
 		})
 	})
-	// Cap request bodies at 1 MB (TASK-39); attachment uploads (TASK-7)
-	// and imports carry files and get their own, larger caps.
+	// Cap request bodies (TASK-39); see bodyLimit. JSON bodies are decoded
+	// with authbase.DecodeJSON under the same cap.
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Body != nil {
-				limit := int64(1 << 20)
-				if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/attachments") {
-					limit = maxAttachmentSize + (1 << 20)
-				}
-				if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/import") {
-					// JSON-escaping can grow the 5 MB file a little.
-					limit = 2*tasks.MaxImportBytes + (1 << 20)
-				}
-				req.Body = http.MaxBytesReader(w, req.Body, limit)
+				req.Body = http.MaxBytesReader(w, req.Body, bodyLimit(req))
 			}
 			next.ServeHTTP(w, req)
 		})
@@ -119,27 +114,33 @@ func NewRouter(deps Deps, version string) http.Handler {
 	}))
 	r.Use(hlog.RequestIDHandler("request_id", "X-Request-ID"))
 
+	// go-chi/cors because authbase.CORS cannot expose response headers
+	// (X-Next-Cursor); the allowed request headers come from authbase, so
+	// X-Dev-User and X-Dev-Groups are only allowed in dev mode.
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   deps.Config.CORSAllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Dev-User", "X-Dev-Groups", "X-Request-ID"},
+		AllowedHeaders:   authCfg.AllowedHeaders(),
 		ExposedHeaders:   []string{"X-Request-ID", "X-Next-Cursor"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 
 	health := newHealthHandler(deps.Pool, version)
-	resolver := auth.NewResolver(deps.Pool, deps.Access)
+	resolver := auth.NewResolver(deps.Pool, deps.Access, deps.Config.Groups)
 	authMW := auth.Middleware(deps.Config, resolver, deps.OIDCVerifier)
 
 	den := deps.Den
 	if den == nil {
-		den = denlink.New(deps.Pool, denlink.Config{Slug: "tasks", Version: version, Mode: deps.Config.DenMode}, deps.Logger)
+		dc := deps.Config.Den
+		dc.Slug, dc.Version = "tasks", version
+		den = denlink.New(deps.Pool, dc, deps.Logger)
 	}
 	brandH := &brandHandler{provider: deps.Brand, den: den}
 	svc := tasks.NewService(deps.Pool)
 	svc.SetEnvSMTP(deps.Config.SMTP())
 	svc.SetPublicURL(deps.Config.PublicBaseURL)
+	svc.SetGroupMatch(deps.Config.Groups)
 	send := deps.SendMail
 	if send == nil {
 		send = mail.Send
@@ -151,10 +152,24 @@ func NewRouter(deps Deps, version string) http.Handler {
 	r.Get("/livez", health.livez)
 	r.Get("/readyz", health.readyz)
 
+	// Per-person token bucket (TASK-41): ~20 req/s sustained with room for
+	// bursty page loads. It exists to stop a runaway script, not real use.
+	limiter := authbase.NewRateLimiter(authbase.RateLimitOptions{
+		Rate: 20, Burst: 100,
+		Key: authbase.BySubject(func(r *http.Request) (authbase.UserKey, bool) {
+			u, ok := auth.FromContext(r.Context())
+			if !ok {
+				return authbase.UserKey{}, false
+			}
+			return authbase.UserKey{Issuer: u.Issuer, Subject: u.Subject}, true
+		}),
+	})
+
 	r.Route("/api", func(api chi.Router) {
+		api.Use(authbase.SecurityHeaders)
 		api.Use(den.RequirePaired)
 		api.Get("/health", health.get)
-		api.Get("/role-catalog", roleCatalogHandler(deps.Access))
+		api.Get("/role-catalog", roleCatalogHandler(deps.Access, deps.Config.HRServiceToken, authMW))
 		api.Get("/den/state", den.StateHandler)
 		// Service-to-service: HR ensures one space per department
 		// (TASK-25). Guarded by TASKS_SERVICE_TOKEN, not user auth.
@@ -169,9 +184,7 @@ func NewRouter(deps Deps, version string) http.Handler {
 
 			v1.Group(func(secure chi.Router) {
 				secure.Use(authMW)
-				// Per-user token bucket (TASK-41): ~20 req/s sustained
-				// with room for bursty page loads.
-				secure.Use(newRateLimiter(20, 100).middleware)
+				secure.Use(limiter.Middleware)
 				secure.Get("/me", meHandler)
 				prefs := den.PreferencesHandler(func(r *http.Request) (string, string, bool) {
 					u, ok := auth.FromContext(r.Context())
