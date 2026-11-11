@@ -91,3 +91,8 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   scan (Trivy, HIGH and CRITICAL issues that have a fix).
 - A production build never falls back to dev sign-in: a `/config.json`
   without `authMode` means OIDC.
+- The backend fails closed: without `APP_ENV` and `AUTH_MODE` it starts as
+  `APP_ENV=production` with `AUTH_MODE=oidc` and refuses to start until
+  `OIDC_ISSUER_URL` and `OIDC_CLIENT_ID` are set. Development setups set
+  `APP_ENV=development` and `AUTH_MODE=dev` explicitly (Docker Compose and
+  `.env.example` already do).

@@ -88,7 +88,9 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		AppEnv: getEnv("APP_ENV", "development"),
+		// Fail closed: a deployment that sets neither APP_ENV nor AUTH_MODE
+		// runs as production with OIDC, never with trusted dev headers.
+		AppEnv: getEnv("APP_ENV", "production"),
 		// Container-internal defaults: every module in the ecosystem binds
 		// :8080 inside its container. Host-side port mapping (host 8160 ->
 		// container 8080 for Tasks) is handled by docker-compose / K8s.
@@ -97,7 +99,7 @@ func Load() (*Config, error) {
 
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 
-		AuthMode:         AuthMode(getEnv("AUTH_MODE", "dev")),
+		AuthMode:         AuthMode(getEnv("AUTH_MODE", string(AuthModeOIDC))),
 		OIDCIssuerURL:    getEnv("OIDC_ISSUER_URL", ""),
 		OIDCClientID:     getEnv("OIDC_CLIENT_ID", ""),
 		OIDCAudience:     getEnv("OIDC_AUDIENCE", ""),
