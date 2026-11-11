@@ -233,7 +233,7 @@ func view(sp tasks.Space, level tasks.Level) spaceView {
 // spaces that only show through lists shared with them. Private lists only
 // appear for managers and the directly granted.
 func (h *taskHandler) listSpaces(r *http.Request, u *auth.User) (int, any, error) {
-	spaces, err := h.svc.ListSpaces(r.Context())
+	spaces, truncated, err := h.svc.ListSpaces(r.Context())
 	if err != nil {
 		return 0, nil, err
 	}
@@ -281,7 +281,7 @@ func (h *taskHandler) listSpaces(r *http.Request, u *auth.User) (int, any, error
 			out = append(out, v)
 		}
 	}
-	return http.StatusOK, map[string]any{"spaces": out}, nil
+	return http.StatusOK, map[string]any{"spaces": out, "truncated": truncated}, nil
 }
 
 func (h *taskHandler) createSpace(r *http.Request, u *auth.User) (int, any, error) {
@@ -619,6 +619,40 @@ func (h *taskHandler) getTask(r *http.Request, u *auth.User) (int, any, error) {
 		return 0, nil, err
 	}
 	return http.StatusOK, d, nil
+}
+
+// taskComments and taskEvents page through everything the task detail
+// leaves out (it embeds only the newest comments and events).
+func (h *taskHandler) taskComments(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := h.taskID(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, _, err := h.requireTask(r, u, id, tasks.LevelView); err != nil {
+		return 0, nil, err
+	}
+	limit, cursor := pageParams(r)
+	out, next, err := h.svc.Comments(r.Context(), id, limit, cursor)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, pagedBody{body: map[string]any{"comments": out}, next: next}, nil
+}
+
+func (h *taskHandler) taskEvents(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := h.taskID(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, _, err := h.requireTask(r, u, id, tasks.LevelView); err != nil {
+		return 0, nil, err
+	}
+	limit, cursor := pageParams(r)
+	out, next, err := h.svc.Events(r.Context(), id, limit, cursor)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, pagedBody{body: map[string]any{"events": out}, next: next}, nil
 }
 
 func (h *taskHandler) updateTask(r *http.Request, u *auth.User) (int, any, error) {

@@ -68,6 +68,12 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
   Building from source needs Go 1.27.3 or newer.
+- Long task histories stay fast: `GET /api/v1/tasks/{task}` embeds the
+  newest 100 comments and 200 activity entries plus `comments_total` and
+  `events_total`; `GET /api/v1/tasks/{task}/comments` and `…/events` page
+  through the rest (`?limit=`, `X-Next-Cursor`). The task page offers
+  *Show N older entries*. The sidebar (`GET /api/v1/spaces`) returns at
+  most 1,000 spaces and says `"truncated": true` when there are more.
 - CI on every pull request (tests, lint, Trivy scans) and signed images with
   an SBOM published to GHCR on version tags (linux/amd64; linux/arm64
   optional).

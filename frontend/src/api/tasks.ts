@@ -174,6 +174,9 @@ export type TaskDetail = Task & {
   checklist: ChecklistItem[];
   watchers: Person[];
   attachments: Attachment[];
+  /** Totals; comments and events hold only the newest 100 and 200. */
+  comments_total: number;
+  events_total: number;
 };
 
 export type ListWithSpace = List & { space: Space; my_level: AccessLevel | ''; can_edit: boolean };
@@ -246,20 +249,30 @@ export const deleteList = (id: string) => apiRequest<void>(`/api/v1/lists/${id}`
  * collection. The page cap only guards against a server bug; at 200 tasks a
  * page it allows 10,000 tasks per view.
  */
-async function allPages(path: string, signal?: AbortSignal): Promise<Task[]> {
-  const all: Task[] = [];
+async function allPagesOf<T>(path: string, key: string, signal?: AbortSignal): Promise<T[]> {
+  const all: T[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < 50; page++) {
-    const { data, headers } = await apiRequestWithHeaders<{ tasks: Task[] }>(path, {
+    const { data, headers } = await apiRequestWithHeaders<Record<string, T[]>>(path, {
       signal,
       query: { cursor },
     });
-    all.push(...data.tasks);
+    all.push(...(data[key] ?? []));
     cursor = headers.get('X-Next-Cursor') ?? undefined;
     if (!cursor) break;
   }
   return all;
 }
+const allPages = (path: string, signal?: AbortSignal) => allPagesOf<Task>(path, 'tasks', signal);
+
+/** Every comment and event of a task; the task detail embeds only the newest. */
+export const taskHistory = async (taskId: string, signal?: AbortSignal) => {
+  const [comments, events] = await Promise.all([
+    allPagesOf<Comment>(`/api/v1/tasks/${taskId}/comments`, 'comments', signal),
+    allPagesOf<TaskEvent>(`/api/v1/tasks/${taskId}/events`, 'events', signal),
+  ]);
+  return { comments, events };
+};
 
 export const listTasks = (listId: string, signal?: AbortSignal) => allPages(`/api/v1/lists/${listId}/tasks`, signal);
 

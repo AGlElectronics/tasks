@@ -190,6 +190,8 @@ func NewRouter(deps Deps, version string) http.Handler {
 				secure.Get("/tasks/{task}", handle(th.getTask))
 				secure.Patch("/tasks/{task}", handle(th.updateTask))
 				secure.Delete("/tasks/{task}", handle(th.deleteTask))
+				secure.Get("/tasks/{task}/comments", handle(th.taskComments))
+				secure.Get("/tasks/{task}/events", handle(th.taskEvents))
 				secure.Post("/tasks/{task}/comments", handle(th.addComment))
 				secure.Delete("/comments/{comment}", handle(th.deleteComment))
 				secure.Patch("/comments/{comment}", handle(th.updateComment))

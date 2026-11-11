@@ -29,6 +29,7 @@ import {
   listPeople,
   listSpaces,
   listTags,
+  taskHistory,
   unwatchTask,
   updateChecklistItem,
   updateComment,
@@ -391,6 +392,13 @@ export function TaskPage() {
   const task = useQuery({ queryKey: ['task', taskKey], queryFn: ({ signal }) => getTask(taskKey, signal) });
   const spaces = useQuery({ queryKey: ['spaces'], queryFn: ({ signal }) => listSpaces(signal) });
   const people = useQuery({ queryKey: ['people'], queryFn: ({ signal }) => listPeople(signal) });
+  const [fullHistory, setFullHistory] = useState(false);
+  const taskId = task.data?.id;
+  const history = useQuery({
+    queryKey: ['task', taskKey, 'history', taskId],
+    queryFn: ({ signal }) => taskHistory(taskId!, signal),
+    enabled: fullHistory && !!taskId,
+  });
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -477,9 +485,11 @@ export function TaskPage() {
   // Fields the Vikunja feedback called noise stay behind "More" until used.
   const showMore = moreFields || !!t.priority || !!t.start_at;
 
+  const hidden = t.comments_total - t.comments.length + (t.events_total - t.events.length);
+  const source = fullHistory && history.data ? history.data : t;
   const timeline = [
-    ...t.comments.map((c) => ({ at: c.created_at, comment: c, event: null as TaskEvent | null })),
-    ...t.events.map((e) => ({ at: e.created_at, comment: null, event: e })),
+    ...source.comments.map((c) => ({ at: c.created_at, comment: c, event: null as TaskEvent | null })),
+    ...source.events.map((e) => ({ at: e.created_at, comment: null, event: e })),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
   return (
@@ -578,6 +588,16 @@ export function TaskPage() {
 
           <div>
             <h2 className="text-sm font-bold mb-2">Activity</h2>
+            {hidden > 0 && !(fullHistory && history.data) ? (
+              <button
+                type="button"
+                disabled={history.isFetching}
+                onClick={() => setFullHistory(true)}
+                className="mb-3 text-xs font-semibold text-primary hover:underline disabled:opacity-50"
+              >
+                {history.isFetching ? 'Loading…' : `Show ${hidden} older entr${hidden === 1 ? 'y' : 'ies'}`}
+              </button>
+            ) : null}
             <div className="space-y-3">
               {timeline.map((item) =>
                 item.comment ? (

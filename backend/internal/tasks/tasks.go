@@ -299,6 +299,10 @@ type TaskDetail struct {
 	Checklist   []ChecklistItem `json:"checklist"`
 	Watchers    []Person        `json:"watchers"`
 	Attachments []Attachment    `json:"attachments"`
+	// CommentsTotal and EventsTotal count everything; Comments and Events
+	// hold only the newest DetailComments / DetailEvents.
+	CommentsTotal int `json:"comments_total"`
+	EventsTotal   int `json:"events_total"`
 }
 
 // Detail loads the full task page.
@@ -323,47 +327,126 @@ func (s *Service) Detail(ctx context.Context, id uuid.UUID) (TaskDetail, error) 
 	if d.Statuses, err = s.statuses(ctx, s.pool, t.SpaceID); err != nil {
 		return d, err
 	}
-
-	rows, err := s.pool.Query(ctx, `
-		SELECT c.id, c.author_id,
-		       -- NULL author: an automation (named) or a deleted user.
-		       COALESCE(u.display_name, 'Automation “' || NULLIF(c.via_automation, '') || '”', 'Former user'),
-		       c.body, c.created_at, c.edited_at
-		  FROM comments c LEFT JOIN users u ON u.id = c.author_id
-		 WHERE c.task_id = $1 ORDER BY c.created_at`, id)
-	if err != nil {
+	// The task page shows the newest comments and events; older ones are
+	// paged through Comments and Events.
+	if d.Comments, err = s.scanComments(ctx, `
+		SELECT * FROM (`+commentSelect+` WHERE c.task_id = $1 ORDER BY c.created_at DESC, c.id DESC LIMIT $2) x
+		 ORDER BY 5, 1`, id, DetailComments); err != nil {
 		return d, err
 	}
-	d.Comments = []Comment{}
+	if d.Events, err = s.scanEvents(ctx, `
+		SELECT * FROM (`+eventSelect+` WHERE e.task_id = $1 ORDER BY e.created_at DESC, e.id DESC LIMIT $2) x
+		 ORDER BY 5, 1`, id, DetailEvents); err != nil {
+		return d, err
+	}
+	err = s.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM comments WHERE task_id = $1), (SELECT count(*) FROM task_events WHERE task_id = $1)`, id,
+	).Scan(&d.CommentsTotal, &d.EventsTotal)
+	return d, err
+}
+
+// How many comments and events the task detail embeds (newest first).
+const (
+	DetailComments = 100
+	DetailEvents   = 200
+)
+
+const commentSelect = `
+	SELECT c.id, c.author_id,
+	       -- NULL author: an automation (named) or a deleted user.
+	       COALESCE(u.display_name, 'Automation “' || NULLIF(c.via_automation, '') || '”', 'Former user'),
+	       c.body, c.created_at, c.edited_at
+	  FROM comments c LEFT JOIN users u ON u.id = c.author_id`
+
+const eventSelect = `
+	SELECT e.id, COALESCE(u.display_name, 'Someone'), e.kind, e.data, e.created_at
+	  FROM task_events e LEFT JOIN users u ON u.id = e.actor_id`
+
+func (s *Service) scanComments(ctx context.Context, sql string, args ...any) ([]Comment, error) {
+	rows, err := s.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Comment{}
 	for rows.Next() {
 		var c Comment
 		if err := rows.Scan(&c.ID, &c.AuthorID, &c.AuthorName, &c.Body, &c.CreatedAt, &c.EditedAt); err != nil {
-			rows.Close()
-			return d, err
+			return nil, err
 		}
-		d.Comments = append(d.Comments, c)
+		out = append(out, c)
 	}
-	rows.Close()
+	return out, rows.Err()
+}
 
-	rows, err = s.pool.Query(ctx, `
-		SELECT e.id, COALESCE(u.display_name, 'Someone'), e.kind, e.data, e.created_at
-		  FROM task_events e LEFT JOIN users u ON u.id = e.actor_id
-		 WHERE e.task_id = $1 ORDER BY e.created_at`, id)
+func (s *Service) scanEvents(ctx context.Context, sql string, args ...any) ([]Event, error) {
+	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
-		return d, err
+		return nil, err
 	}
 	defer rows.Close()
-	d.Events = []Event{}
+	out := []Event{}
 	for rows.Next() {
 		var e Event
 		var data []byte
 		if err := rows.Scan(&e.ID, &e.ActorName, &e.Kind, &data, &e.CreatedAt); err != nil {
-			return d, err
+			return nil, err
 		}
 		e.Data = data
-		d.Events = append(d.Events, e)
+		out = append(out, e)
 	}
-	return d, rows.Err()
+	return out, rows.Err()
+}
+
+// timeCursor is the keyset position (created_at, id) of the last row of a
+// page in oldest-first order.
+type timeCursor struct {
+	At time.Time `json:"t"`
+	ID uuid.UUID `json:"i"`
+}
+
+// Comments returns one page of a task's comments, oldest first.
+func (s *Service) Comments(ctx context.Context, taskID uuid.UUID, limit int, cursor string) ([]Comment, string, error) {
+	limit = ClampLimit(limit)
+	var c timeCursor
+	if err := decodeCursor(cursor, &c); err != nil {
+		return nil, "", err
+	}
+	out, err := s.scanComments(ctx, commentSelect+`
+		WHERE c.task_id = $1 AND ($2::bool OR (c.created_at, c.id) > ($3, $4))
+		ORDER BY c.created_at, c.id LIMIT $5`, taskID, cursor == "", c.At, c.ID, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(out) > limit {
+		out = out[:limit]
+		last := out[len(out)-1]
+		next = encodeCursor(timeCursor{At: last.CreatedAt, ID: last.ID})
+	}
+	return out, next, nil
+}
+
+// Events returns one page of a task's activity, oldest first.
+func (s *Service) Events(ctx context.Context, taskID uuid.UUID, limit int, cursor string) ([]Event, string, error) {
+	limit = ClampLimit(limit)
+	var c timeCursor
+	if err := decodeCursor(cursor, &c); err != nil {
+		return nil, "", err
+	}
+	out, err := s.scanEvents(ctx, eventSelect+`
+		WHERE e.task_id = $1 AND ($2::bool OR (e.created_at, e.id) > ($3, $4))
+		ORDER BY e.created_at, e.id LIMIT $5`, taskID, cursor == "", c.At, c.ID, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(out) > limit {
+		out = out[:limit]
+		last := out[len(out)-1]
+		next = encodeCursor(timeCursor{At: last.CreatedAt, ID: last.ID})
+	}
+	return out, next, nil
 }
 
 // Nullable distinguishes "absent" from "explicitly null" in a PATCH body.

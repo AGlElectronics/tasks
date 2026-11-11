@@ -81,11 +81,24 @@ var defaultStatuses = []Status{
 	{Name: "Done", Color: "#22c55e", Category: domain.CategoryDone},
 }
 
-// ListSpaces returns every space with its lists and statuses (sidebar).
-func (s *Service) ListSpaces(ctx context.Context) ([]Space, error) {
+// MaxSpaces bounds the sidebar query. An organization has tens of spaces;
+// the cap only keeps a runaway import from making every page load slow.
+const MaxSpaces = 1000
+
+// ListSpaces returns up to MaxSpaces spaces with their lists and statuses
+// (sidebar). truncated reports that more spaces exist.
+func (s *Service) ListSpaces(ctx context.Context) (spaces []Space, truncated bool, err error) {
+	spaces, err = s.listSpaces(ctx)
+	if len(spaces) > MaxSpaces {
+		spaces, truncated = spaces[:MaxSpaces], true
+	}
+	return spaces, truncated, err
+}
+
+func (s *Service) listSpaces(ctx context.Context) ([]Space, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, organization_id, name, key, color, description, created_by, created_at, everyone_level
-		  FROM spaces ORDER BY position, name`)
+		  FROM spaces ORDER BY position, name LIMIT $1`, MaxSpaces+1)
 	if err != nil {
 		return nil, err
 	}
