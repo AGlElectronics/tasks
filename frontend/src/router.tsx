@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router';
 
 import { Layout } from '@/components/Layout';
+import { AuditPage } from '@/pages/AuditPage';
 import { InboxPage } from '@/pages/InboxPage';
 import { ListPage, type ListSearch } from '@/pages/ListPage';
 import { LoginPage } from '@/pages/LoginPage';
@@ -121,6 +122,13 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const auditRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/settings/audit',
+  beforeLoad: ({ location }) => requireAuth(location.pathname),
+  component: AuditPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   authCallbackRoute,
@@ -133,6 +141,7 @@ const routeTree = rootRoute.addChildren([
     listRoute,
     taskRoute,
     settingsRoute,
+    auditRoute,
   ]),
 ]);
 

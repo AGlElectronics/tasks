@@ -164,6 +164,11 @@ func NewRouter(deps Deps, version string) http.Handler {
 					dr.Delete("/pair", den.UnpairHandler)
 				})
 
+				secure.Group(func(admin chi.Router) {
+					admin.Use(requirePermission(domain.PermSettingsManage))
+					admin.Get("/audit", handle(th.audit))
+				})
+
 				secure.Get("/users", handle(th.people))
 				secure.Get("/my-work", handle(th.myWork))
 

@@ -75,6 +75,12 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
   Building from source needs Go 1.27.3 or newer.
+- Admins read the audit log in the web app (*Settings → Audit log*) or at
+  `GET /api/v1/audit` (`settings.manage`): deletes, purges, grants given
+  and removed, archived and restored spaces and settings changes, newest
+  first, filtered by `entity`, `action`, `actor`, `entity_id`, `since`
+  and `until` and paged with `X-Next-Cursor`. Entries made by the system
+  (retention sweep, HR's department hook) show the actor *System*.
 - Long task histories stay fast: `GET /api/v1/tasks/{task}` embeds the
   newest 100 comments and 200 activity entries plus `comments_total` and
   `events_total`; `GET /api/v1/tasks/{task}/comments` and `…/events` page
