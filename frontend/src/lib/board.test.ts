@@ -1,6 +1,6 @@
 // TASK-55: board drop positions and the default row ordering.
 import { describe, expect, it } from 'vitest';
-import { dropPosition, orderTasks } from './board';
+import { dropPatch, dropPosition, orderTasks, sortTasks } from './board';
 
 const col = [
   { id: 'a', position: 1024 },
@@ -36,6 +36,48 @@ describe('dropPosition', () => {
 
   it('falls back to the end when the target id is not in the column', () => {
     expect(dropPosition(col, 'missing')).toBe(3072 + 1024);
+  });
+});
+
+describe('dropPatch', () => {
+  const card = (id: string, status: string, position: number) => ({ id, status: { id: status }, position, version: 3 });
+  const board = [card('a', 'todo', 1024), card('b', 'todo', 2048), card('c', 'doing', 1024)];
+
+  it('changes the status when a card lands in another column', () => {
+    expect(dropPatch(board, board[0], 'doing', null)).toEqual({ position: 2048, version: 3, status_id: 'doing' });
+    expect(dropPatch(board, board[0], 'doing', 'c')).toEqual({ position: 512, version: 3, status_id: 'doing' });
+  });
+
+  it('keeps the status when reordering inside a column', () => {
+    const body = dropPatch(board, board[1], 'todo', 'a');
+    expect(body.status_id).toBeUndefined();
+    expect(body.position).toBe(512);
+  });
+
+  it('ignores the dragged card itself when computing the end of its column', () => {
+    expect(dropPatch(board, board[1], 'todo', null).position).toBe(1024 + 1024);
+  });
+});
+
+describe('sortTasks', () => {
+  const row = (id: string, extra: Partial<{ title: string; due_at: string | null; created_at: string; position: number }>) => ({
+    id,
+    priority: null,
+    due_at: null,
+    title: id,
+    created_at: '2027-01-01T00:00:00Z',
+    updated_at: '2027-01-01T00:00:00Z',
+    position: 0,
+    ...extra,
+  });
+  it('sorts by title case-insensitively and by due date with undated last', () => {
+    const rows = [row('b', { title: 'banana', due_at: null }), row('a', { title: 'Apple', due_at: '2027-02-01' }), row('c', { title: 'cherry', due_at: '2027-01-01' })];
+    expect(sortTasks(rows, 'title').map((r) => r.id)).toEqual(['a', 'b', 'c']);
+    expect(sortTasks(rows, 'due').map((r) => r.id)).toEqual(['c', 'a', 'b']);
+  });
+  it('puts the newest first for created', () => {
+    const rows = [row('old', { created_at: '2027-01-01T00:00:00Z' }), row('new', { created_at: '2027-03-01T00:00:00Z' })];
+    expect(sortTasks(rows, 'created').map((r) => r.id)).toEqual(['new', 'old']);
   });
 });
 

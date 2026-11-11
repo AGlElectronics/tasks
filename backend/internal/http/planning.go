@@ -1,7 +1,9 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/AGlElectronics/tasks/backend/internal/auth"
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
@@ -145,6 +147,37 @@ func (h *taskHandler) listTimeReport(r *http.Request, u *auth.User) (int, any, e
 		return 0, nil, err
 	}
 	return http.StatusOK, map[string]any{"people": rows, "total_minutes": total}, nil
+}
+
+// calendar serves GET /api/v1/calendar?from=&to=[&mine=1]: dated tasks
+// across every space the caller can see, for the calendar page.
+func (h *taskHandler) calendar(r *http.Request, u *auth.User) (int, any, error) {
+	q := r.URL.Query()
+	from, to := q.Get("from"), q.Get("to")
+	issues := map[string]string{}
+	f, err1 := time.Parse("2006-01-02", from)
+	t, err2 := time.Parse("2006-01-02", to)
+	if err1 != nil {
+		issues["from"] = "required, YYYY-MM-DD"
+	}
+	if err2 != nil {
+		issues["to"] = "required, YYYY-MM-DD"
+	}
+	if err1 == nil && err2 == nil && (t.Before(f) || t.Sub(f) > tasks.MaxCalendarDays*24*time.Hour) {
+		issues["to"] = fmt.Sprintf("must be on or after from and at most %d days later", tasks.MaxCalendarDays)
+	}
+	if len(issues) > 0 {
+		return 0, nil, httperror.Validation("invalid range", issues)
+	}
+	vis, err := h.visibility(r.Context(), u, false)
+	if err != nil {
+		return 0, nil, err
+	}
+	out, truncated, err := h.svc.Calendar(r.Context(), from, to, u.ID, vis.viewSpaces, vis.manageSpaces, vis.grantedLists, q.Get("mine") == "1")
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, map[string]any{"tasks": out, "truncated": truncated}, nil
 }
 
 // visibleDeps drops the dependency ends the caller cannot see.

@@ -19,11 +19,63 @@ export function dropPosition(col: Positioned[], beforeId: string | null): number
   return (prev + next) / 2;
 }
 
+type Droppable = Positioned & { status: { id: string }; version: number };
+
+/**
+ * dropPatch is the PATCH body for dropping `dragged` into the column of
+ * `statusId` above `beforeId` (null = at the end). `tasks` is the whole
+ * board. Dropping into another column also changes the status.
+ */
+export function dropPatch<T extends Droppable>(
+  tasks: T[],
+  dragged: T,
+  statusId: string,
+  beforeId: string | null
+): { position: number; version: number; status_id?: string } {
+  const col = tasks.filter((t) => t.status.id === statusId && t.id !== dragged.id);
+  const body: { position: number; version: number; status_id?: string } = {
+    position: dropPosition(col, beforeId),
+    version: dragged.version,
+  };
+  if (statusId !== dragged.status.id) body.status_id = statusId;
+  return body;
+}
+
 export type OrderableTask = {
   priority: 'urgent' | 'high' | 'normal' | 'low' | null;
   due_at: string | null;
   position: number;
 };
+
+/** Sort orders a person can pick in the list view. */
+export type SortKey = 'smart' | 'manual' | 'due' | 'priority' | 'title' | 'created' | 'updated';
+export const SORTS: { key: SortKey; label: string }[] = [
+  { key: 'smart', label: 'Priority, then due date' },
+  { key: 'manual', label: 'Manual (board order)' },
+  { key: 'due', label: 'Due date' },
+  { key: 'priority', label: 'Priority' },
+  { key: 'title', label: 'Title' },
+  { key: 'created', label: 'Newest first' },
+  { key: 'updated', label: 'Recently updated' },
+];
+
+type SortableTask = OrderableTask & { title: string; created_at: string; updated_at: string };
+
+/** sortTasks orders rows by the chosen key; ties fall back to position. */
+export function sortTasks<T extends SortableTask>(rows: T[], key: SortKey): T[] {
+  if (key === 'smart') return orderTasks(rows);
+  const byPos = (a: T, b: T) => a.position - b.position;
+  const cmp: Record<Exclude<SortKey, 'smart'>, (a: T, b: T) => number> = {
+    manual: byPos,
+    due: (a, b) => (a.due_at ?? '9999').localeCompare(b.due_at ?? '9999') || byPos(a, b),
+    priority: (a, b) =>
+      (a.priority ? PRIORITY_RANK[a.priority] : 4) - (b.priority ? PRIORITY_RANK[b.priority] : 4) || byPos(a, b),
+    title: (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }) || byPos(a, b),
+    created: (a, b) => b.created_at.localeCompare(a.created_at) || byPos(a, b),
+    updated: (a, b) => b.updated_at.localeCompare(a.updated_at) || byPos(a, b),
+  };
+  return [...rows].sort(cmp[key]);
+}
 
 // Clear visual order inside a status group (part of the Vikunja feedback):
 // urgent things first, then by due date, then manual position.

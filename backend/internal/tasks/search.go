@@ -18,6 +18,40 @@ type SearchHit struct {
 	Done      bool      `json:"done"`
 }
 
+// MaxCalendarDays bounds the calendar's date range; MaxCalendarTasks its
+// result.
+const (
+	MaxCalendarDays  = 120
+	MaxCalendarTasks = 2000
+)
+
+// Calendar returns tasks the caller can see whose start-to-due span
+// overlaps [from, to], across all spaces (same visibility as Search). With
+// mine set, only tasks assigned to the caller. truncated reports that more
+// than MaxCalendarTasks matched.
+func (s *Service) Calendar(ctx context.Context, from, to string, userID uuid.UUID, viewSpaceIDs, manageSpaceIDs, listIDs []uuid.UUID, mine bool) ([]Task, bool, error) {
+	out, err := s.queryTasks(ctx, `
+		WHERE t.deleted_at IS NULL
+		  AND COALESCE(t.start_at, t.due_at) IS NOT NULL
+		  AND LEAST(COALESCE(t.start_at, t.due_at), COALESCE(t.due_at, t.start_at)) <= $2::date
+		  AND GREATEST(COALESCE(t.start_at, t.due_at), COALESCE(t.due_at, t.start_at)) >= $1::date
+		  AND ((t.space_id = ANY($3) AND NOT l.private)
+		       OR t.space_id = ANY($4)
+		       OR t.list_id = ANY($5)
+		       OR EXISTS (SELECT 1 FROM task_assignees a WHERE a.task_id = t.id AND a.user_id = $6))
+		  AND (NOT $7 OR EXISTS (SELECT 1 FROM task_assignees a WHERE a.task_id = t.id AND a.user_id = $6))
+		ORDER BY COALESCE(t.due_at, t.start_at), t.id
+		LIMIT $8`, from, to, viewSpaceIDs, manageSpaceIDs, listIDs, userID, mine, MaxCalendarTasks+1)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(out) > MaxCalendarTasks
+	if truncated {
+		out = out[:MaxCalendarTasks]
+	}
+	return out, truncated, nil
+}
+
 // Search finds tasks by title or KEY-N across what the caller can see: the
 // handler passes the spaces the caller has at least view on (private lists
 // excluded unless managed), plus lists shared directly. Matching is simple

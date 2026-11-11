@@ -202,6 +202,7 @@ func NewRouter(deps Deps, version string) http.Handler {
 				secure.Get("/me/notifications", handle(th.notificationPrefs))
 				secure.Put("/me/notifications", handle(th.notificationPrefs))
 
+				secure.Get("/calendar", handle(th.calendar))
 				secure.Get("/users", handle(th.people))
 				secure.Get("/my-work", handle(th.myWork))
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, Folder as FolderIcon, Inbox, LayoutGrid, ListChecks, LogOut, Menu, Settings, Star, X } from 'lucide-react';
+import { Bell, CalendarDays, Folder as FolderIcon, Inbox, LayoutGrid, ListChecks, LogOut, Menu, Settings, Star, X } from 'lucide-react';
 import { getUnreadCount, listFavorites, listSpaces, updateList, type List, type Space } from '@/api/tasks';
 import { isOidcAuthMode, signOutOidc } from '@/auth/oidc';
 import { CommandPalette } from '@/components/CommandPalette';
@@ -55,6 +55,7 @@ type NavItem = {
 const NAV: NavItem[] = [
   { to: '/my-work', label: 'My work', icon: Inbox, perms: [] },
   { to: '/inbox', label: 'Inbox', icon: Bell, perms: [] },
+  { to: '/calendar', label: 'Calendar', icon: CalendarDays, perms: [] },
   { to: '/spaces', label: 'Spaces', icon: LayoutGrid, perms: [] },
   { to: '/settings', label: 'Settings', icon: Settings, perms: [PERMS.settingsManage] },
 ];

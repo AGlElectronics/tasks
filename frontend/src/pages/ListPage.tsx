@@ -1,7 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { Columns3, List as ListIcon, Plus, Search as SearchIcon, Star, X } from 'lucide-react';
+import {
+  ArrowUpDown,
+  CalendarDays,
+  Columns3,
+  GanttChart,
+  List as ListIcon,
+  Plus,
+  Search as SearchIcon,
+  Star,
+  Users,
+  X,
+} from 'lucide-react';
 import { ApiError } from '@/api/client';
 import {
   PRIORITIES,
@@ -26,11 +37,18 @@ import { Card } from '@/components/ui/Card';
 import { PageContainer } from '@/components/ui/PageHeader';
 import { ErrorRow, LoadingRow } from '@/components/ui/States';
 import { Avatars, DueBadge, PriorityFlag, StatusSelect, TaskLink, TaskMeta } from '@/components/TaskBits';
-import { dropPosition, orderTasks } from '@/lib/board';
+import { FieldChips, useFields } from '@/components/CustomFields';
+import { CalendarGrid } from '@/components/views/CalendarGrid';
+import { thisMonth, type Month } from '@/lib/calendar';
+import { TimelineView } from '@/components/views/TimelineView';
+import { WorkloadView } from '@/components/views/WorkloadView';
+import { SORTS, dropPatch, sortTasks, type SortKey } from '@/lib/board';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 
-export type ListSearch = { view?: 'list' | 'board' };
+export const LIST_VIEWS = ['list', 'board', 'calendar', 'timeline', 'workload'] as const;
+export type ListView = (typeof LIST_VIEWS)[number];
+export type ListSearch = { view?: ListView };
 
 type Filters = {
   text: string;
@@ -38,20 +56,44 @@ type Filters = {
   priority: Priority | '';
   assigneeId: string;
   tagId: string;
+  /** "<field id>=<option id>" for select custom fields. */
+  field: string;
 };
 
-const EMPTY_FILTERS: Filters = { text: '', statusId: '', priority: '', assigneeId: '', tagId: '' };
+const EMPTY_FILTERS: Filters = { text: '', statusId: '', priority: '', assigneeId: '', tagId: '', field: '' };
 
 function applyFilters(tasks: Task[], f: Filters): Task[] {
   const text = f.text.trim().toLowerCase();
+  const [fieldId, fieldValue] = f.field ? f.field.split('=') : ['', ''];
   return tasks.filter((t) => {
     if (text && !t.title.toLowerCase().includes(text) && !t.key.toLowerCase().includes(text)) return false;
     if (f.statusId && t.status.id !== f.statusId) return false;
     if (f.priority && t.priority !== f.priority) return false;
     if (f.assigneeId && !t.assignees.some((a) => a.id === f.assigneeId)) return false;
     if (f.tagId && !t.tags.some((tg) => tg.id === f.tagId)) return false;
+    if (fieldId && t.fields?.[fieldId] !== fieldValue) return false;
     return true;
   });
+}
+
+/** Filters and sort are remembered per list in this browser. */
+type SavedView = { filters: Filters; sort: SortKey };
+const storageKey = (listId: string) => `tasks:list-view:${listId}`;
+
+function loadSaved(listId: string): SavedView {
+  try {
+    const raw = localStorage.getItem(storageKey(listId));
+    if (raw) {
+      const v = JSON.parse(raw) as Partial<SavedView>;
+      return {
+        filters: { ...EMPTY_FILTERS, ...(v.filters ?? {}) },
+        sort: SORTS.some((s) => s.key === v.sort) ? (v.sort as SortKey) : 'smart',
+      };
+    }
+  } catch {
+    // unreadable: fall back to defaults
+  }
+  return { filters: EMPTY_FILTERS, sort: 'smart' };
 }
 
 function FilterBar({
@@ -59,15 +101,21 @@ function FilterBar({
   statuses,
   filters,
   onChange,
+  sort,
+  onSort,
 }: {
   spaceId: string;
   statuses: Status[];
   filters: Filters;
   onChange: (f: Filters) => void;
+  sort: SortKey;
+  onSort: (s: SortKey) => void;
 }) {
   const people = useQuery({ queryKey: ['people'], queryFn: ({ signal }) => listPeople(signal) });
   const tags = useQuery({ queryKey: ['tags', spaceId], queryFn: ({ signal }) => listTags(spaceId, signal) });
-  const active = filters !== EMPTY_FILTERS && Object.values(filters).some((v) => v !== '');
+  const fields = useFields(spaceId);
+  const selectFields = (fields.data ?? []).filter((f) => f.type === 'select');
+  const active = Object.values(filters).some((v) => v !== '');
   const sel = 'h-8 rounded-pill border border-border bg-card px-2.5 text-xs';
   return (
     <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -118,6 +166,20 @@ function FilterBar({
           ))}
         </select>
       ) : null}
+      {selectFields.length > 0 ? (
+        <select value={filters.field} onChange={(e) => onChange({ ...filters, field: e.target.value })} className={sel} aria-label="Field">
+          <option value="">Any field value</option>
+          {selectFields.map((f) => (
+            <optgroup key={f.id} label={f.name}>
+              {f.options.map((o) => (
+                <option key={o.id} value={`${f.id}=${o.id}`}>
+                  {f.name}: {o.name}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      ) : null}
       {active ? (
         <button
           type="button"
@@ -127,6 +189,16 @@ function FilterBar({
           <X className="w-3.5 h-3.5" /> Clear
         </button>
       ) : null}
+      <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <ArrowUpDown className="w-3.5 h-3.5" />
+        <select value={sort} onChange={(e) => onSort(e.target.value as SortKey)} className={sel} aria-label="Sort">
+          {SORTS.map((s) => (
+            <option key={s.key} value={s.key}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }
@@ -334,27 +406,35 @@ function QuickAdd({ onAdd, pending }: { onAdd: (title: string) => void; pending:
   );
 }
 
-function ListView({
+function ListRows({
   statuses,
   tasks,
   listId,
+  spaceId,
   canEdit,
   selected,
   onToggleSelect,
+  sort,
 }: {
   statuses: Status[];
   tasks: Task[];
   listId: string;
+  spaceId: string;
   canEdit: boolean;
   selected: Set<string>;
   onToggleSelect: (id: string) => void;
+  sort: SortKey;
 }) {
   const { patch, create } = useTaskMutations(listId);
+  const fields = useFields(spaceId);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   return (
     <div className="space-y-5">
       {statuses.map((st) => {
-        const rows = orderTasks(tasks.filter((t) => t.status.id === st.id));
+        const rows = sortTasks(
+          tasks.filter((t) => t.status.id === st.id),
+          sort
+        );
         const isCollapsed = collapsed[st.id] ?? (st.category === 'done' && rows.length > 5);
         return (
           <section key={st.id}>
@@ -397,6 +477,7 @@ function ListView({
                           {tg.name}
                         </span>
                       ))}
+                      <FieldChips fields={fields.data ?? []} values={t.fields ?? {}} />
                       <TaskMeta task={t} />
                     </div>
                     <PriorityFlag priority={t.priority} />
@@ -438,11 +519,7 @@ function BoardView({
     setDragId(null);
     setOver(null);
     if (!dragged) return;
-    const col = tasks.filter((t) => t.status.id === statusId && t.id !== dragged.id);
-    const position = dropPosition(col, beforeId);
-    const body: TaskPatch = { position, version: dragged.version };
-    if (statusId !== dragged.status.id) body.status_id = statusId;
-    patch.mutate({ id: dragged.id, body });
+    patch.mutate({ id: dragged.id, body: dropPatch(tasks, dragged, statusId, beforeId) });
   };
 
   return (
@@ -549,7 +626,23 @@ export function ListPage() {
 
   const list = useQuery({ queryKey: ['list', listId], queryFn: ({ signal }) => getList(listId, signal) });
   const tasks = useQuery({ queryKey: ['tasks', listId], queryFn: ({ signal }) => listTasks(listId, signal) });
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [saved, setSaved] = useState<SavedView>(() => loadSaved(listId));
+  const [savedFor, setSavedFor] = useState(listId);
+  if (savedFor !== listId) {
+    setSavedFor(listId);
+    setSaved(loadSaved(listId));
+  }
+  const { filters, sort } = saved;
+  const setFilters = (f: Filters) => setSaved((s) => ({ ...s, filters: f }));
+  const setSort = (k: SortKey) => setSaved((s) => ({ ...s, sort: k }));
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey(savedFor), JSON.stringify(saved));
+    } catch {
+      // storage full or disabled: the view just is not remembered
+    }
+  }, [saved, savedFor]);
+  const [month, setMonth] = useState<Month>(thisMonth);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const topLevel = useMemo(
@@ -560,6 +653,8 @@ export function ListPage() {
       ).sort((a, b) => a.position - b.position),
     [tasks.data, filters]
   );
+  // Calendar, timeline and workload include subtasks: they have dates too.
+  const filtered = useMemo(() => applyFilters(tasks.data ?? [], filters), [tasks.data, filters]);
 
   if (list.isLoading) return <LoadingRow />;
   if (list.isError || !list.data) {
@@ -596,6 +691,9 @@ export function ListPage() {
             [
               ['list', 'List', ListIcon],
               ['board', 'Board', Columns3],
+              ['calendar', 'Calendar', CalendarDays],
+              ['timeline', 'Timeline', GanttChart],
+              ['workload', 'Workload', Users],
             ] as const
           ).map(([v, label, Icon]) => (
             <button
@@ -612,21 +710,29 @@ export function ListPage() {
           ))}
         </div>
       </div>
-      <FilterBar spaceId={l.space.id} statuses={statuses} filters={filters} onChange={setFilters} />
+      <FilterBar spaceId={l.space.id} statuses={statuses} filters={filters} onChange={setFilters} sort={sort} onSort={setSort} />
       {tasks.isLoading ? (
         <LoadingRow />
       ) : tasks.isError ? (
         <ErrorRow message="Could not load tasks." />
       ) : view === 'board' ? (
         <BoardView statuses={statuses} tasks={topLevel} listId={listId} canEdit={l.can_edit} />
+      ) : view === 'calendar' ? (
+        <CalendarGrid tasks={filtered} month={month} onMonth={setMonth} />
+      ) : view === 'timeline' ? (
+        <TimelineView tasks={filtered} />
+      ) : view === 'workload' ? (
+        <WorkloadView tasks={filtered} listId={listId} />
       ) : (
-        <ListView
+        <ListRows
           statuses={statuses}
           tasks={topLevel}
           listId={listId}
+          spaceId={l.space.id}
           canEdit={l.can_edit}
           selected={selected}
           onToggleSelect={toggleSelect}
+          sort={sort}
         />
       )}
       {selected.size > 0 ? (

@@ -9,7 +9,8 @@ import {
 import { Layout } from '@/components/Layout';
 import { AuditPage } from '@/pages/AuditPage';
 import { InboxPage } from '@/pages/InboxPage';
-import { ListPage, type ListSearch } from '@/pages/ListPage';
+import { CalendarPage } from '@/pages/CalendarPage';
+import { LIST_VIEWS, ListPage, type ListSearch, type ListView } from '@/pages/ListPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { MyWorkPage } from '@/pages/MyWorkPage';
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage';
@@ -103,7 +104,7 @@ const listRoute = createRoute({
   path: '/lists/$listId',
   beforeLoad: ({ location }) => requireAuth(location.pathname),
   validateSearch: (search: Record<string, unknown>): ListSearch => ({
-    view: search.view === 'board' || search.view === 'list' ? search.view : undefined,
+    view: LIST_VIEWS.includes(search.view as ListView) ? (search.view as ListView) : undefined,
   }),
   component: ListPage,
 });
@@ -120,6 +121,13 @@ const settingsRoute = createRoute({
   path: '/settings',
   beforeLoad: ({ location }) => requireAuth(location.pathname),
   component: SettingsPage,
+});
+
+const calendarRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/calendar',
+  beforeLoad: ({ location }) => requireAuth(location.pathname),
+  component: CalendarPage,
 });
 
 const auditRoute = createRoute({
@@ -142,6 +150,7 @@ const routeTree = rootRoute.addChildren([
     taskRoute,
     settingsRoute,
     auditRoute,
+    calendarRoute,
   ]),
 ]);
 

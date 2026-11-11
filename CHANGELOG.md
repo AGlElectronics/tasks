@@ -75,6 +75,16 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
   Building from source needs Go 1.27.3 or newer.
+- Calendar, timeline and workload views. A list can be shown as a month
+  calendar, a timeline (a bar from start to due date per task) or a
+  workload table (open tasks and estimated time per person per week, plus
+  the time logged). *Calendar* in the sidebar shows every dated task you
+  can see across spaces (`GET /api/v1/calendar?from=&to=[&mine=1]`, at most
+  120 days and 2,000 tasks).
+- The list view sorts the way you choose (priority then due date, manual
+  board order, due date, priority, title, newest, recently updated),
+  filters by a select custom field, and remembers its filters and sort per
+  list in your browser.
 - Custom fields: a space's managers define fields of type text, number,
   date, select, checkbox or URL (*Space → Custom fields*,
   `GET`/`POST /api/v1/spaces/{space}/fields`, `PATCH`/`DELETE
