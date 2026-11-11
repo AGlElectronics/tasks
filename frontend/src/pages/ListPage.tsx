@@ -10,9 +10,11 @@ import {
   Plus,
   Search as SearchIcon,
   Star,
+  Upload,
   Users,
   X,
 } from 'lucide-react';
+import { ImportDialog } from '@/components/ImportDialog';
 import { ApiError } from '@/api/client';
 import {
   PRIORITIES,
@@ -643,6 +645,7 @@ export function ListPage() {
     }
   }, [saved, savedFor]);
   const [month, setMonth] = useState<Month>(thisMonth);
+  const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const topLevel = useMemo(
@@ -684,7 +687,18 @@ export function ListPage() {
           <span className="flex items-center gap-1">
             <h1 className="font-heading text-2xl font-extrabold leading-tight tracking-tight">{l.name}</h1>
             <ListFavoriteStar listId={l.id} />
+            {l.can_edit ? (
+              <button
+                type="button"
+                onClick={() => setImporting(true)}
+                className="p-1.5 rounded-pill hover:bg-secondary text-muted-foreground"
+                title="Import tasks from CSV, ClickUp or Vikunja"
+              >
+                <Upload className="w-4 h-4" />
+              </button>
+            ) : null}
           </span>
+          {importing ? <ImportDialog listId={l.id} onClose={() => setImporting(false)} /> : null}
         </div>
         <div className="inline-flex rounded-pill border border-border p-0.5 bg-card">
           {(

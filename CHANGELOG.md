@@ -75,6 +75,13 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
   Building from source needs Go 1.27.3 or newer.
+- Import tasks into a list from a plain CSV, a ClickUp CSV export or a
+  Vikunja `data.json` (*List → Import*, `POST /api/v1/lists/{list}/import`
+  with `format`, `content` and `dry_run`; edit access on the list). A dry
+  run previews the tasks and lists every problem (unknown status, person,
+  date or priority); the import itself runs in one transaction, is audited,
+  and creates missing tags only for space managers. At most 5 MB and 2,000
+  tasks per import.
 - Calendar, timeline and workload views. A list can be shown as a month
   calendar, a timeline (a bar from start to due date per task) or a
   workload table (open tasks and estimated time per person per week, plus

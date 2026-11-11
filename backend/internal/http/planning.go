@@ -180,6 +180,36 @@ func (h *taskHandler) calendar(r *http.Request, u *auth.User) (int, any, error) 
 	return http.StatusOK, map[string]any{"tasks": out, "truncated": truncated}, nil
 }
 
+// importTasks serves POST /api/v1/lists/{list}/import: edit on the list;
+// new tags are only created for space managers.
+func (h *taskHandler) importTasks(r *http.Request, u *auth.User) (int, any, error) {
+	id, err := parseUUIDParam(r, "list")
+	if err != nil {
+		return 0, nil, err
+	}
+	_, sp, _, err := h.requireList(r, u, id, tasks.LevelEdit)
+	if err != nil {
+		return 0, nil, err
+	}
+	spLevel, err := h.levelForSpace(r, u, sp)
+	if err != nil {
+		return 0, nil, err
+	}
+	var in tasks.ImportInput
+	if err := decodeJSON(r, &in); err != nil {
+		return 0, nil, err
+	}
+	res, err := h.svc.ImportTasks(r.Context(), u.ID, id, in, spLevel >= tasks.LevelManage)
+	if err != nil {
+		return 0, nil, err
+	}
+	status := http.StatusCreated
+	if in.DryRun {
+		status = http.StatusOK
+	}
+	return status, res, nil
+}
+
 // visibleDeps drops the dependency ends the caller cannot see.
 func (h *taskHandler) visibleDeps(r *http.Request, u *auth.User, refs []tasks.DepRef) ([]tasks.DepRef, int) {
 	out := make([]tasks.DepRef, 0, len(refs))

@@ -93,13 +93,17 @@ func NewRouter(deps Deps, version string) http.Handler {
 		})
 	})
 	// Cap request bodies at 1 MB (TASK-39); attachment uploads (TASK-7)
-	// are multipart and get their own, larger cap.
+	// and imports carry files and get their own, larger caps.
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Body != nil {
 				limit := int64(1 << 20)
 				if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/attachments") {
 					limit = maxAttachmentSize + (1 << 20)
+				}
+				if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/import") {
+					// JSON-escaping can grow the 5 MB file a little.
+					limit = 2*tasks.MaxImportBytes + (1 << 20)
 				}
 				req.Body = http.MaxBytesReader(w, req.Body, limit)
 			}
@@ -269,6 +273,7 @@ func NewRouter(deps Deps, version string) http.Handler {
 				secure.Post("/tasks/{task}/time", handle(th.logTime))
 				secure.Delete("/time/{entry}", handle(th.deleteTime))
 				secure.Get("/lists/{list}/time-report", handle(th.listTimeReport))
+				secure.Post("/lists/{list}/import", handle(th.importTasks))
 				secure.Post("/tasks/{task}/dependencies", handle(th.addDependency))
 				secure.Delete("/tasks/{task}/dependencies/{other}", handle(th.removeDependency))
 				secure.Post("/tasks/{task}/watch", handle(th.watch))
