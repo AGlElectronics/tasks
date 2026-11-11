@@ -36,9 +36,28 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 - `DEN_MODE=required` keeps the module locked until it is paired with Den:
   the API answers `503 den_pairing_required` (except health, brand, sign-in
   and the Den connection routes) and the public `GET /api/den/state`
-  (also at `/api/v1/den/state`) reports `{"mode","paired"}`. The default
-  `standalone` runs without Den; any other value stops the backend at
-  startup.
+  (also at `/api/v1/den/state`) reports `{"mode","paired","revoked"}`. The
+  default `standalone` runs without Den; any other value stops the backend
+  at startup.
+- When Den rejects the module's credential (the pairing was revoked or the
+  module removed in Den), Tasks marks the link revoked (`revoked` and
+  `revoked_at` in `GET /api/v1/den`, `"revoked": true` in the Den state)
+  and keeps using the last settings from Den. It never pairs again by
+  itself: *Settings → Den connection* and a banner for admins say "pair
+  again manually", and pairing with a new pairing URL clears the state.
+  The migration `20261111000009_den_link_revoked.sql` adds the column.
+- `GET /api/role-catalog` follows the role catalog contract: each role has
+  `key`, `label`, `description`, `group` and `group_display`,
+  `assignable`, `default`, `scope`, `privileged`, `dynamic` and
+  `permissions`, and the catalog has `module`, `display_name`,
+  `description` and `revision` (also the `ETag`; `If-None-Match` answers
+  `304`). HR's backend reads it with the new `HR_SERVICE_TOKEN`; anyone
+  signed in can read it too.
+- `OIDC_GROUPS_CLAIM` (default `groups`), `OIDC_GROUP_MATCH` (`full`, the
+  default, or `last`) and `OIDC_GROUP_PREFIX` (for example `/con2026`)
+  choose where groups come from and how they match grants and role
+  bindings. See
+  [Configuration](https://aglelectronics.github.io/con-services/modules/tasks/configuration/).
 - The web app shows a "Connect this module to Den" page (admins) or
   "Waiting for Den" (everyone else) while the backend runs with
   `DEN_MODE=required` and is not paired yet.
@@ -182,7 +201,39 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   matches `departments/ops` but not `ops`). Grants show the name as it was
   typed (`subject`) and match on `subject_key`. On upgrade, the migration
   fills `subject_key` for existing grants and merges grants that only
-  differed in case or a leading `/`, keeping the strongest level.
+  differed in case or a leading `/`, keeping the strongest level. Groups
+  come only from the `OIDC_GROUPS_CLAIM` claim; Keycloak realm roles are
+  no longer merged in, so a role that was used like a group has to become
+  a Keycloak group.
+- Sign-in follows the token contract: the web app keeps tokens in memory
+  only (never in `localStorage`), signs in again silently through the
+  Keycloak session after a reload, and sends the access token. The backend
+  accepts only access tokens whose audience is `OIDC_AUDIENCE` (default
+  `tasks-api`, added by the audience mapper on the `tasks-spa` client) and
+  refuses ID tokens. Tabs agree on who is signed in over a
+  `BroadcastChannel` that carries the user id, never a token.
+- The Den credential is stored encrypted with `DEN_LINK_ENCRYPTION_KEY`
+  (base64 of 32 bytes, `openssl rand -base64 32`), which is required
+  unless `APP_ENV=development`; `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` allows a
+  rotation. A pasted pairing URL must point at a host in
+  `DEN_ALLOWED_HOSTS` (or `DEN_INTERNAL_URL` must be set); in development
+  `localhost` and `*.conservices.test` are always allowed. Keep the key in
+  your secret manager; see
+  [Secrets](https://aglelectronics.github.io/con-services/operations/secrets/).
+- JSON request bodies are limited to 1 MB (attachments and imports have
+  their own, larger limits): a larger body answers `413
+  request_too_large`, a body that is not JSON `415
+  unsupported_media_type`.
+- `X-Dev-User` and `X-Dev-Groups` are dropped from every request and left
+  out of CORS unless the backend runs with `AUTH_MODE=dev` and
+  `APP_ENV=development`.
+- API responses carry their own security headers
+  (`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`,
+  `X-Content-Type-Options`, `Referrer-Policy`), and the per-person rate
+  limit (20 requests a second, bursts of 100; by client address before
+  sign-in, IPv6 by /64) is the shared Con Services one.
+- `HR_SERVICE_TOKEN` is compared in constant time; it is a secret, see
+  [Secrets](https://aglelectronics.github.io/con-services/operations/secrets/).
 - Giving and removing access (grants) is written to the audit log.
 
 - Rate limits cannot be bypassed with a fake `X-Forwarded-For` header: the
@@ -192,10 +243,17 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 - On Kubernetes the database URL Den shows ends in
   `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`;
   the platform's PostgreSQL refuses connections without TLS.
-- The web app's Content-Security-Policy limits scripts, frames and other
-  content to the web app itself and allows HTTPS connections to any host
-  (`connect-src 'self' https:`), so sign-in works with the Keycloak address
-  set in `config.json`.
+- The web app sends the shared Con Services browser security headers
+  (`infra/security-headers.conf.template`): scripts, styles and images only
+  from the app itself, connections and frames only to the app and the
+  origins in `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN` and
+  `EXTRA_CONNECT_SRC` (set on the web app container, empty by default),
+  no framing, forms only to the app or Keycloak, and a Permissions-Policy
+  that turns off camera, microphone and location. Set `KEYCLOAK_ORIGIN` to
+  the sign-in server's origin, or OIDC sign-in and silent renewal are
+  blocked. The inline scripts of `index.html` and `silent-callback.html`
+  moved into `theme-init.js` and `silent-callback.js`. The headers are
+  not added to `/api/`, where the backend sets its own.
 - No image runs as root. The web app runs on
   `nginxinc/nginx-unprivileged:1.30.6-alpine` as UID 101 and listens on
   port 8080. All images are built with Go 1.27.3 and pass the CI image
@@ -204,6 +262,8 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   without `authMode` means OIDC.
 - The backend fails closed: without `APP_ENV` and `AUTH_MODE` it starts as
   `APP_ENV=production` with `AUTH_MODE=oidc` and refuses to start until
-  `OIDC_ISSUER_URL` and `OIDC_CLIENT_ID` are set. Development setups set
-  `APP_ENV=development` and `AUTH_MODE=dev` explicitly (Docker Compose and
-  `.env.example` already do).
+  `OIDC_ISSUER_URL` is set (`OIDC_AUDIENCE` defaults to `tasks-api`).
+  `AUTH_MODE=dev` is refused unless `APP_ENV=development`. Development
+  setups set `APP_ENV=development` and `AUTH_MODE=dev` explicitly (Docker
+  Compose and `.env.example` already do). The backend no longer reads
+  `OIDC_CLIENT_ID`.

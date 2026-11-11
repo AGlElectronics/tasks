@@ -25,10 +25,20 @@ list grants and space managers see it. This replaces the plan's
 case-insensitively, and compare the whole path (`/departments/ops`
 matches `departments/ops`, not `ops`). Each grant stores the name as typed
 (`subject`, shown in the UI) and the normalised form (`subject_key`, used
-for matching and for the one-grant-per-group unique index). Until the
-shared package is adopted, `internal/tasks/groups.go` implements the rule
-locally (`TODO(shared/groupmatch)`); adopting it adds `OIDC_GROUP_PREFIX`
-and `OIDC_GROUP_MATCH=last` without changing the stored data.
+for matching and for the one-grant-per-group unique index).
+
+Update (November 2026): Tasks now uses the shared package
+(`internal/groupmatch`, synced by `scripts/sync-shared`). `subject_key` is
+`groupmatch.NewGrant(subject).Stored`, which is the same normalised form as
+before, so stored grants did not change. Groups are read only from
+`OIDC_GROUPS_CLAIM`; realm roles are no longer merged in.
+`OIDC_GROUP_PREFIX` and `OIDC_GROUP_MATCH=last` are applied at match time:
+the person's groups become `Config.Key` values in Go, and the stored
+`subject_key` goes through the SQL function `tasks_group_key(key, prefix,
+mode)` (migration `20261111000010_group_key_function.sql`), which applies
+the same prefix and last-segment rule. A test checks that the SQL function
+and the Go package agree. With the defaults (no prefix, `full`) the
+function returns the key unchanged.
 
 ## Consequences
 
@@ -38,3 +48,7 @@ and `OIDC_GROUP_MATCH=last` without changing the stored data.
 - Every grant change is in the audit log.
 - Changing the matching rule later (for example last-segment matching) is
   a configuration of the shared package, not a data migration.
+- `tasks_group_key` duplicates the prefix and last-segment rule of
+  `groupmatch.Config.Key` in SQL, because grants are matched in queries.
+  When the shared package changes that rule, the SQL function needs a new
+  migration; the agreement test fails until it has one.
