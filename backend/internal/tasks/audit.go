@@ -33,7 +33,7 @@ type AuditFilter struct {
 }
 
 // AuditEntities are the values the entity filter accepts.
-var AuditEntities = []string{"task", "list", "space", "comment", "attachment", "grant", "settings"}
+var AuditEntities = []string{"task", "list", "space", "comment", "attachment", "grant", "settings", "field"}
 
 // AuditLog returns one page of the audit log, newest first, and the cursor
 // for the next (older) page.

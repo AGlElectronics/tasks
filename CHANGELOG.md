@@ -75,6 +75,14 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
   Building from source needs Go 1.27.3 or newer.
+- Custom fields: a space's managers define fields of type text, number,
+  date, select, checkbox or URL (*Space → Custom fields*,
+  `GET`/`POST /api/v1/spaces/{space}/fields`, `PATCH`/`DELETE
+  /api/v1/fields/{field}`); anyone who can edit a task sets the values
+  (`PATCH /api/v1/tasks/{task}` with `"fields": {"<field id>": value}`,
+  `null` clears). Tasks carry `fields` in every response, changes appear in
+  the activity log, values stay behind when a task moves to another space,
+  and deleting a field (with all its values) is audited.
 - Live updates: boards, lists, task pages, the sidebar and the Inbox
   refresh within a second when someone else changes something, over
   Server-Sent Events at `GET /api/v1/stream` (signed in; at most 5 streams

@@ -47,6 +47,7 @@ import { Label } from '@/components/ui/Input';
 import { PageContainer } from '@/components/ui/PageHeader';
 import { ErrorRow, LoadingRow } from '@/components/ui/States';
 import { Avatar, DueBadge, PriorityFlag, StatusSelect, TaskLink } from '@/components/TaskBits';
+import { TaskFields } from '@/components/CustomFields';
 import { useMe } from '@/hooks/useMe';
 import { notify } from '@/lib/notify';
 import { timeAgo } from '@/lib/format';
@@ -96,6 +97,8 @@ function describeBase(e: TaskEvent): string {
       return 'moved it to the trash';
     case 'restored':
       return 'restored it from the trash';
+    case 'field':
+      return to ? `set ${str(e.data.field)} to ${to}` : `cleared ${str(e.data.field)}`;
     case 'completed':
       return 'completed it (its status became a done status)';
     case 'reopened':
@@ -729,6 +732,7 @@ export function TaskPage() {
               <Label>Tags</Label>
               <TagPicker task={t} onChange={(ids) => set({ tag_ids: ids })} />
             </div>
+            <TaskFields spaceId={t.space_id} values={t.fields} onChange={(id, v) => set({ fields: { [id]: v } })} />
 
             {!showMore ? (
               <button

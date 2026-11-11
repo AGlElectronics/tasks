@@ -31,6 +31,7 @@ import {
   type StatusInput,
 } from '@/api/tasks';
 import { AutomationsCard } from '@/components/AutomationsCard';
+import { FieldsCard } from '@/components/CustomFields';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { notify } from '@/lib/notify';
@@ -697,6 +698,7 @@ export function SpacePage() {
             <SharingCard space={sp} />
             <AutomationsCard space={sp} />
             <TagsCard space={sp} />
+            <FieldsCard space={sp} />
             <FoldersCard space={sp} />
             <StatusesCard space={sp} />
             <SpaceSettingsCard space={sp} />

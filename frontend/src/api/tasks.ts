@@ -103,7 +103,36 @@ export type Task = {
   comment_count: number;
   checklist_total: number;
   checklist_done: number;
+  /** Custom field id → value (string, number, boolean, YYYY-MM-DD or select option id). */
+  fields: Record<string, FieldValue>;
 };
+
+export type FieldType = 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'url';
+export const FIELD_TYPES: FieldType[] = ['text', 'number', 'date', 'select', 'checkbox', 'url'];
+export type FieldValue = string | number | boolean;
+export type FieldOption = { id: string; name: string; color: string };
+export type CustomField = {
+  id: string;
+  space_id: string;
+  name: string;
+  type: FieldType;
+  options: FieldOption[];
+  position: number;
+};
+export type FieldInput = {
+  name?: string;
+  type?: FieldType;
+  options?: { id?: string; name: string; color?: string }[];
+  position?: number;
+};
+
+export const listFields = (spaceId: string, signal?: AbortSignal) =>
+  apiRequest<{ fields: CustomField[] }>(`/api/v1/spaces/${spaceId}/fields`, { signal }).then((r) => r.fields);
+export const createField = (spaceId: string, body: FieldInput) =>
+  apiRequest<CustomField>(`/api/v1/spaces/${spaceId}/fields`, { method: 'POST', body });
+export const updateField = (id: string, body: FieldInput) =>
+  apiRequest<CustomField>(`/api/v1/fields/${id}`, { method: 'PATCH', body });
+export const deleteField = (id: string) => apiRequest<void>(`/api/v1/fields/${id}`, { method: 'DELETE' });
 
 export type ChecklistItem = {
   id: string;
@@ -221,6 +250,8 @@ export type TaskPatch = {
   due_at?: string | null;
   assignee_ids?: string[];
   tag_ids?: string[];
+  /** Custom field id → value; null clears it. */
+  fields?: Record<string, FieldValue | null>;
   version?: number;
 };
 

@@ -24,8 +24,8 @@ export function splitKey(key: string): [string, string] {
 
 // Admin-only endpoints (settings.manage).
 
-export type AuditEntity = 'task' | 'list' | 'space' | 'comment' | 'attachment' | 'grant' | 'settings';
-export const AUDIT_ENTITIES: AuditEntity[] = ['task', 'list', 'space', 'comment', 'attachment', 'grant', 'settings'];
+export type AuditEntity = 'task' | 'list' | 'space' | 'comment' | 'attachment' | 'grant' | 'settings' | 'field';
+export const AUDIT_ENTITIES: AuditEntity[] = ['task', 'list', 'space', 'comment', 'attachment', 'grant', 'settings', 'field'];
 
 export type AuditEntry = {
   id: string;

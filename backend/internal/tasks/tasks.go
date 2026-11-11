@@ -55,6 +55,8 @@ type Task struct {
 	CommentCount int        `json:"comment_count"`
 	CheckTotal   int        `json:"checklist_total"`
 	CheckDone    int        `json:"checklist_done"`
+	// Fields maps custom field id → value (see fields.go).
+	Fields map[string]json.RawMessage `json:"fields"`
 }
 
 // The per-task aggregates come from lateral joins instead of four
@@ -68,7 +70,7 @@ SELECT t.id, sp.key || '-' || t.number, t.number, t.space_id, t.list_id, l.name,
        t.position, t.completed_at, t.version, t.created_at, t.updated_at, t.created_by,
        COALESCE(asg.people, '[]'::json), COALESCE(tgs.tags, '[]'::json),
        COALESCE(sub.total, 0), COALESCE(sub.done, 0), COALESCE(cmt.n, 0),
-       COALESCE(chk.total, 0), COALESCE(chk.done, 0)
+       COALESCE(chk.total, 0), COALESCE(chk.done, 0), COALESCE(fvs.m, '{}'::json)
   FROM tasks t
   JOIN spaces sp ON sp.id = t.space_id
   JOIN lists l ON l.id = t.list_id
@@ -87,16 +89,19 @@ SELECT t.id, sp.key || '-' || t.number, t.number, t.space_id, t.list_id, l.name,
        SELECT count(*) AS n FROM comments cm WHERE cm.task_id = t.id) cmt ON true
   LEFT JOIN LATERAL (
        SELECT count(*) AS total, count(*) FILTER (WHERE ci.done) AS done
-         FROM checklist_items ci WHERE ci.task_id = t.id) chk ON true`
+         FROM checklist_items ci WHERE ci.task_id = t.id) chk ON true
+  LEFT JOIN LATERAL (
+       SELECT json_object_agg(fv.field_id, fv.value) AS m
+         FROM task_field_values fv WHERE fv.task_id = t.id) fvs ON true`
 
 func scanTask(row pgx.Row) (Task, error) {
 	var t Task
-	var assignees, tags []byte
+	var assignees, tags, fields []byte
 	err := row.Scan(&t.ID, &t.Key, &t.Number, &t.SpaceID, &t.ListID, &t.ListName,
 		&t.ParentID, &t.ParentKey, &t.ParentTitle,
 		&t.Title, &t.Description, &t.Status.ID, &t.Status.Name, &t.Status.Color, &t.Status.Category, &t.Priority,
 		&t.StartAt, &t.DueAt, &t.Position, &t.CompletedAt, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.CreatedBy,
-		&assignees, &tags, &t.SubtaskCount, &t.SubtaskDone, &t.CommentCount, &t.CheckTotal, &t.CheckDone)
+		&assignees, &tags, &t.SubtaskCount, &t.SubtaskDone, &t.CommentCount, &t.CheckTotal, &t.CheckDone, &fields)
 	if err != nil {
 		return Task{}, err
 	}
@@ -106,6 +111,10 @@ func scanTask(row pgx.Row) (Task, error) {
 	}
 	t.Tags = []Tag{}
 	if err := json.Unmarshal(tags, &t.Tags); err != nil {
+		return Task{}, err
+	}
+	t.Fields = map[string]json.RawMessage{}
+	if err := json.Unmarshal(fields, &t.Fields); err != nil {
 		return Task{}, err
 	}
 	return t, nil
@@ -668,6 +677,8 @@ type TaskPatch struct {
 	DueAt       Nullable     `json:"due_at"`
 	AssigneeIDs *[]uuid.UUID `json:"assignee_ids"`
 	TagIDs      *[]uuid.UUID `json:"tag_ids"`
+	// Fields sets custom field values by field id; null clears one.
+	Fields map[uuid.UUID]json.RawMessage `json:"fields"`
 	Version     *int         `json:"version"`
 }
 
@@ -949,6 +960,17 @@ func (s *Service) UpdateTask(ctx context.Context, actor, id uuid.UUID, p TaskPat
 			return Task{}, err
 		}
 	}
+	if len(p.Fields) > 0 {
+		// Fields belong to the task's space (the target space if this
+		// patch also moved it).
+		var spaceID uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT space_id FROM tasks WHERE id = $1`, id).Scan(&spaceID); err != nil {
+			return Task{}, err
+		}
+		if err := s.setFieldValues(ctx, tx, actor, id, spaceID, p.Fields); err != nil {
+			return Task{}, err
+		}
+	}
 	// Atomic optimistic lock: bump only if nobody committed in between the
 	// GetTask above and here. Zero rows means a concurrent writer won; the
 	// transaction rolls back and the caller gets a conflict.
@@ -1058,6 +1080,9 @@ func moveAcrossSpaces(ctx context.Context, tx pgx.Tx, id, targetList, targetSpac
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM task_tags WHERE task_id = $1`, m.id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM task_field_values WHERE task_id = $1`, m.id); err != nil {
 			return err
 		}
 	}
