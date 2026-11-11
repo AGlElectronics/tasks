@@ -18,21 +18,19 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { SpacePage } from '@/pages/SpacePage';
 import { SpacesPage } from '@/pages/SpacesPage';
 import { TaskPage } from '@/pages/TaskPage';
-import { getUserManager, isOidcAuthMode } from '@/auth/oidc';
+import { currentUser, isOidcAuthMode } from '@/auth/oidc';
 
-// In OIDC mode a route behind the Layout checks there is a cached user
-// before letting the component mount. If not, we redirect to /login and
-// carry the attempted path so the post-login redirect lands there.
+// In OIDC mode a route behind the Layout checks there is a signed-in user
+// before letting the component mount. Tokens are kept in memory only, so
+// after a reload currentUser() signs in silently through the Keycloak
+// session first. Without a session we redirect to /login and carry the
+// attempted path so the post-login redirect lands there.
 async function requireAuth(fullPath: string) {
   if (!isOidcAuthMode()) {
     return; // dev mode: nothing to check
   }
-  const mgr = getUserManager();
-  if (!mgr) {
-    throw redirect({ to: '/login', search: { redirect: fullPath } });
-  }
-  const user = await mgr.getUser();
-  if (!user || user.expired) {
+  const user = await currentUser();
+  if (!user) {
     throw redirect({ to: '/login', search: { redirect: fullPath } });
   }
 }

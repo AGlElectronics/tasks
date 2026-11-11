@@ -4,8 +4,9 @@ import { setUnauthorizedHandler } from '@/api/client';
 import { getUserManager } from '@/auth/oidc';
 
 /*
- * Keeps every tab on the identity Keycloak currently has. The OIDC user lives
- * in localStorage (shared by all tabs of this app), so:
+ * Keeps every tab on the identity Keycloak currently has. Tokens live in
+ * each tab's memory only (token contract), so tabs tell each other who is
+ * signed in over a BroadcastChannel; only the subject is sent, never a token:
  *  - another tab signs out            -> this tab goes to the login page
  *  - another tab signs in as someone  -> this tab reloads as that person
  *  - Keycloak session ends elsewhere   -> session monitor signs this tab out
@@ -13,16 +14,9 @@ import { getUserManager } from '@/auth/oidc';
  * Without this, a tab kept a stale admin token after a user switch.
  */
 
-const USER_KEY_PREFIX = 'oidc.user:';
+const CHANNEL = 'tasks-auth';
 
-function subOf(raw: string | null): string | undefined {
-  if (!raw) return undefined;
-  try {
-    return (JSON.parse(raw) as { profile?: { sub?: string } }).profile?.sub;
-  } catch {
-    return undefined;
-  }
-}
+type SessionMessage = { sub: string | null };
 
 export function goToLogin(): void {
   const path = `${window.location.pathname}${window.location.search}`;
@@ -37,22 +31,28 @@ export function installSessionSync(): void {
   if (!mgr || installed || typeof window === 'undefined') return;
   installed = true;
 
+  const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(CHANNEL);
+  const announce = (sub: string | null) => channel?.postMessage({ sub } satisfies SessionMessage);
+
   let currentSub: string | undefined;
   void mgr.getUser().then((u) => {
     currentSub = u?.profile.sub;
   });
   mgr.events.addUserLoaded((u: User) => {
     currentSub = u.profile.sub;
+    announce(u.profile.sub);
+  });
+  mgr.events.addUserUnloaded(() => {
+    currentSub = undefined;
+    announce(null);
   });
 
-  window.addEventListener('storage', (e) => {
-    if (e.storageArea !== window.localStorage) return;
-    if (e.key !== null && !e.key.startsWith(USER_KEY_PREFIX)) return;
-    const next = e.key === null ? undefined : subOf(e.newValue);
+  channel?.addEventListener('message', (e: MessageEvent<SessionMessage>) => {
+    const next = e.data?.sub ?? undefined;
     if (next === currentSub) return; // token refresh for the same person
     if (next === undefined) {
-      goToLogin();
-    } else {
+      void mgr.removeUser().finally(goToLogin);
+    } else if (currentSub !== undefined) {
       window.location.reload();
     }
   });

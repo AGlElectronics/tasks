@@ -8,7 +8,7 @@ import { CommandPalette } from '@/components/CommandPalette';
 import { DenConnection } from '@/components/DenConnection';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useBrand } from '@/brand/BrandProvider';
-import { isDenPairingRequired, useDenState } from '@/hooks/useDenState';
+import { isDenPairingRequired, isDenRevoked, useDenState } from '@/hooks/useDenState';
 import { useMe, PERMS } from '@/hooks/useMe';
 import { dismissNotice, useNotices } from '@/lib/notify';
 import { startRealtime } from '@/lib/realtime';
@@ -456,6 +456,12 @@ export function Layout() {
       </aside>
 
       <main className="flex-1 min-w-0 min-h-0 flex flex-col w-full md:min-h-screen">
+        {isDenRevoked(denState.data) && can(PERMS.settingsManage) ? (
+          <div role="alert" className="border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-sm">
+            Den rejected this module's credential. The last settings from Den stay in use;{' '}
+            <Link to="/settings" className="font-semibold underline">pair again manually in Settings</Link>.
+          </div>
+        ) : null}
         <Outlet />
       </main>
       <Notices />

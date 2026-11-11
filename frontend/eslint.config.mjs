@@ -23,6 +23,14 @@ export default tseslint.config(
     },
   },
   {
+    // Plain scripts served as-is (the CSP forbids inline scripts).
+    files: ['public/**/*.js'],
+    languageOptions: {
+      sourceType: 'script',
+      globals: { window: 'readonly', document: 'readonly', localStorage: 'readonly', parent: 'readonly' },
+    },
+  },
+  {
     ignores: [
       'dist/**',
       'node_modules/**',
