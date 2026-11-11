@@ -72,17 +72,26 @@ services:
       # Container binds :8080 (ecosystem convention). Compose maps 8160 -> 8080.
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://tasks:tasks@postgres:5432/tasks?sslmode=disable
-      # Auth: dev = X-Dev-User / X-Dev-Groups headers; oidc = verify Bearer JWT.
+      # Auth: dev = X-Dev-User / X-Dev-Groups headers (APP_ENV=development
+      # only); oidc = verify the Bearer access token (audience tasks-api).
       AUTH_MODE: ${AUTH_MODE:-dev}
       DEV_DEFAULT_USER: dev-admin
       DEV_DEFAULT_GROUPS: tasks-admin
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-tasks-api}
+      OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-groups}
+      OIDC_GROUP_MATCH: ${OIDC_GROUP_MATCH:-full}
+      OIDC_GROUP_PREFIX: ${OIDC_GROUP_PREFIX:-}
       ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
       # Pairing with Den happens in the app (Settings → Den connection).
       # Set this when the pairing URL Den shows is not reachable from here.
       DEN_INTERNAL_URL: ${DEN_INTERNAL_URL:-}
+      DEN_ALLOWED_HOSTS: ${DEN_ALLOWED_HOSTS:-}
+      # Encrypts the Den credential in the database. DEV-ONLY value; real
+      # keys come from a secret manager (docs/operations/secrets.md).
+      DEN_LINK_ENCRYPTION_KEY: ${DEN_LINK_ENCRYPTION_KEY:-ZGV2LW9ubHktdGFza3MtZGVuLWxpbmsta2V5LTAwMDA=}
+      # HR reads GET /api/role-catalog with this token. DEV-ONLY value.
+      HR_SERVICE_TOKEN: ${HR_SERVICE_TOKEN:-hr-service-dev-token}
       # CORS only matters for `npm run dev` on the host — in prod the SPA
       # talks to /api via the nginx reverse proxy on the same origin.
       CORS_ALLOWED_ORIGINS: http://localhost:3009
@@ -107,6 +116,12 @@ services:
       args:
         TASKS_VERSION: ${TASKS_VERSION:-dev}
     container_name: tasks-frontend
+    environment:
+      # Origins the browser may reach besides the app, for the
+      # Content-Security-Policy (infra/security-headers.conf.template).
+      # Keycloak is needed for OIDC sign-in and silent renewal.
+      KEYCLOAK_ORIGIN: ${KEYCLOAK_ORIGIN:-http://localhost:8085}
+      DEN_ORIGIN: ${DEN_ORIGIN:-}
     volumes:
       # Web app settings (/config.json). Dev sign-in by default; for real
       # sign-in set FRONTEND_CONFIG to your own file (docs: configuration).
