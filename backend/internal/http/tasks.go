@@ -10,6 +10,7 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/domain"
 	"github.com/AGlElectronics/tasks/backend/internal/files"
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
+	"github.com/AGlElectronics/tasks/backend/internal/realtime"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 )
 
@@ -32,6 +33,9 @@ type taskHandler struct {
 	svc   *tasks.Service
 	files *files.Client // nil = attachments not configured
 	send  tasks.SendFunc
+	// hub feeds the live-update stream; nil = live updates off.
+	hub     *realtime.Hub
+	streams streamLimiter
 }
 
 func caller(r *http.Request) (*auth.User, error) {

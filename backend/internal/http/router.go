@@ -48,6 +48,7 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/domain"
 	"github.com/AGlElectronics/tasks/backend/internal/files"
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
+	"github.com/AGlElectronics/tasks/backend/internal/realtime"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 )
 
@@ -65,7 +66,12 @@ type Deps struct {
 	Files *files.Client
 	// SendMail delivers email; nil means mail.Send (tests record instead).
 	SendMail tasks.SendFunc
+	// Hub feeds live updates (GET /api/v1/stream); nil turns them off.
+	Hub *realtime.Hub
 }
+
+// streamPath is exempt from the request timeout: it stays open.
+const streamPath = "/api/v1/stream"
 
 // NewRouter builds the chi router with middleware, CORS, and routes.
 // Version is passed in from cmd/server at build time.
@@ -75,7 +81,17 @@ func NewRouter(deps Deps, version string) http.Handler {
 	r.Use(chimiddleware.RequestID)
 	r.Use(clientip.Middleware(deps.Config.TrustedProxyCIDRs))
 	r.Use(chimiddleware.Recoverer)
-	r.Use(chimiddleware.Timeout(60 * time.Second))
+	timeout := chimiddleware.Timeout(60 * time.Second)
+	r.Use(func(next http.Handler) http.Handler {
+		limited := timeout(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.URL.Path == streamPath {
+				next.ServeHTTP(w, req)
+				return
+			}
+			limited.ServeHTTP(w, req)
+		})
+	})
 	// Cap request bodies at 1 MB (TASK-39); attachment uploads (TASK-7)
 	// are multipart and get their own, larger cap.
 	r.Use(func(next http.Handler) http.Handler {
@@ -128,7 +144,7 @@ func NewRouter(deps Deps, version string) http.Handler {
 	if send == nil {
 		send = mail.Send
 	}
-	th := &taskHandler{svc: svc, files: deps.Files, send: send}
+	th := &taskHandler{svc: svc, files: deps.Files, send: send, hub: deps.Hub}
 
 	// Orchestrator probes — unauthenticated, served from the root so they
 	// don't collide with any /api/* middleware.
@@ -181,6 +197,8 @@ func NewRouter(deps Deps, version string) http.Handler {
 					admin.Put("/settings", handle(th.putSettings))
 					admin.Post("/settings/email/test", handle(th.testEmail))
 				})
+				secure.Get("/stream", th.stream)
+				secure.Get("/stream/status", handle(th.streamStatus))
 				secure.Get("/me/notifications", handle(th.notificationPrefs))
 				secure.Put("/me/notifications", handle(th.notificationPrefs))
 

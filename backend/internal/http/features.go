@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/AGlElectronics/tasks/backend/internal/auth"
-	"github.com/AGlElectronics/tasks/backend/internal/domain"
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 )
@@ -218,39 +217,11 @@ func (h *taskHandler) markRead(r *http.Request, u *auth.User) (int, any, error) 
 func (h *taskHandler) search(r *http.Request, u *auth.User) (int, any, error) {
 	q := r.URL.Query().Get("q")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	spaces, _, err := h.svc.ListSpaces(r.Context(), false)
+	vis, err := h.visibility(r.Context(), u, false)
 	if err != nil {
 		return 0, nil, err
 	}
-	acc, err := h.svc.AccessFor(r.Context(), u.ID, u.Groups)
-	if err != nil {
-		return 0, nil, err
-	}
-	var viewIDs, manageIDs []uuid.UUID
-	for _, sp := range spaces {
-		level := tasks.LevelNone
-		if sp.EveryoneLevel != nil {
-			level = tasks.ParseLevel(*sp.EveryoneLevel)
-		}
-		level = level.Max(acc.SpaceLevels[sp.ID])
-		if u.HasInOrg(domain.PermSpaceManage, sp.OrgID) ||
-			(u.HasInOrg(domain.PermSpaceCreate, sp.OrgID) && sp.CreatedBy != nil && *sp.CreatedBy == u.ID) {
-			level = tasks.LevelManage
-		}
-		switch {
-		case level >= tasks.LevelManage:
-			manageIDs = append(manageIDs, sp.ID)
-		case level >= tasks.LevelView:
-			viewIDs = append(viewIDs, sp.ID)
-		}
-	}
-	var listIDs []uuid.UUID
-	for id, level := range acc.ListLevels {
-		if level >= tasks.LevelView {
-			listIDs = append(listIDs, id)
-		}
-	}
-	hits, err := h.svc.Search(r.Context(), q, u.ID, viewIDs, manageIDs, listIDs, limit)
+	hits, err := h.svc.Search(r.Context(), q, u.ID, vis.viewSpaces, vis.manageSpaces, vis.grantedLists, limit)
 	if err != nil {
 		return 0, nil, err
 	}

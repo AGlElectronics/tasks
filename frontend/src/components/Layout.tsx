@@ -11,6 +11,7 @@ import { useBrand } from '@/brand/BrandProvider';
 import { isDenPairingRequired, useDenState } from '@/hooks/useDenState';
 import { useMe, PERMS } from '@/hooks/useMe';
 import { dismissNotice, useNotices } from '@/lib/notify';
+import { startRealtime } from '@/lib/realtime';
 import { useThemeSync } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -370,6 +371,14 @@ export function Layout() {
   useEffect(() => {
     setDrawerOpen(false);
   }, [pathname]);
+
+  // Live updates once signed in; polling is the fallback.
+  const qc = useQueryClient();
+  const signedIn = !!me;
+  useEffect(() => {
+    if (!signedIn) return;
+    return startRealtime(qc);
+  }, [signedIn, qc]);
 
   if (me && isDenPairingRequired(denState.data)) {
     return <DenPairingGate canManage={can(PERMS.settingsManage)} />;

@@ -75,6 +75,16 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
   Building from source needs Go 1.27.3 or newer.
+- Live updates: boards, lists, task pages, the sidebar and the Inbox
+  refresh within a second when someone else changes something, over
+  Server-Sent Events at `GET /api/v1/stream` (signed in; at most 5 streams
+  per person). Database triggers announce *which* list, space or inbox
+  changed on the PostgreSQL channel `tasks_changes`; each person only hears
+  about lists and spaces they can see, and the browser refetches through
+  the normal API. While connected, background polling slows from 15
+  seconds to 2 minutes; without the stream it stays at 15 seconds. Proxies
+  must not buffer the stream (the backend sends `X-Accel-Buffering: no`)
+  and must allow idle reads of at least 30 seconds (heartbeat every 25).
 - Email notifications. Each person picks which Inbox notifications also
   come by email (*Inbox → Email settings*, `GET`/`PUT
   /api/v1/me/notifications`; default: assigned, mentioned, due soon).

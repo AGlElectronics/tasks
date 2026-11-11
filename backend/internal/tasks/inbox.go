@@ -52,6 +52,29 @@ func (s *Service) IsWatching(ctx context.Context, userID, taskID uuid.UUID) (boo
 	return ok, err
 }
 
+// ListsWithMyTasks returns the lists holding tasks the user is assigned to
+// or watches: those tasks are open to them whatever the list's sharing.
+func (s *Service) ListsWithMyTasks(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT t.list_id FROM tasks t
+		 WHERE t.deleted_at IS NULL AND (
+		       EXISTS (SELECT 1 FROM task_assignees a WHERE a.task_id = t.id AND a.user_id = $1)
+		    OR EXISTS (SELECT 1 FROM task_watchers w WHERE w.task_id = t.id AND w.user_id = $1))`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // notify writes one Inbox notification per recipient, skipping the actor
 // (people should not be notified about their own actions) and duplicates.
 // It runs inside the transaction of the change itself, so a rolled-back

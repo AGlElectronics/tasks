@@ -27,6 +27,7 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/files"
 	httpx "github.com/AGlElectronics/tasks/backend/internal/http"
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
+	"github.com/AGlElectronics/tasks/backend/internal/realtime"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 	"github.com/AGlElectronics/tasks/backend/internal/tlscert"
 )
@@ -156,7 +157,12 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 		return 0, err
 	})
 
+	// Live updates: one LISTEN connection feeds every SSE stream.
+	hub := realtime.NewHub(pool, logger)
+	go hub.Run(ctx)
+
 	router := httpx.NewRouter(httpx.Deps{
+		Hub:          hub,
 		Config:       cfg,
 		Pool:         pool,
 		Logger:       logger,

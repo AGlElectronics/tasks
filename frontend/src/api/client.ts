@@ -35,6 +35,12 @@ export function setAuthHeadersResolver(fn: () => Promise<AuthHeaders>) {
   authHeadersResolver = fn;
 }
 
+/** Current auth headers (dev headers or the OIDC bearer), for streaming fetches. */
+export const authHeaders = () => authHeadersResolver();
+
+/** Absolute URL of an API path. */
+export const apiUrl = (path: string) => `${apiBaseUrl()}${path}`;
+
 let unauthorizedHandler: (() => void) | null = null;
 
 /** Called when the API answers 401 (session gone); set by the OIDC session sync. */
