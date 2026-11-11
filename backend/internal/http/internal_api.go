@@ -11,10 +11,11 @@ import (
 )
 
 // internalDepartmentsHandler serves POST /api/internal/departments for HR
-// (TASK-25): called when a department is created or renamed, it ensures the
-// department's one space exists and tracks its name. Authenticated by the
-// shared TASKS_SERVICE_TOKEN bearer token; without a configured token the
-// route does not exist (404), so the feature is opt-in per deployment.
+// (TASK-25): called when a department is created, saved or archived
+// (HR's DEPARTMENT_HOOKS), it ensures the department's one space exists and
+// tracks its name and archived state. Authenticated by the shared
+// TASKS_SERVICE_TOKEN bearer token; without a configured token the route
+// does not exist (404), so the feature is opt-in per deployment.
 func internalDepartmentsHandler(cfg *config.Config, svc *tasks.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimSpace(cfg.TasksServiceToken)
@@ -28,7 +29,7 @@ func internalDepartmentsHandler(cfg *config.Config, svc *tasks.Service) http.Han
 			return
 		}
 		var in tasks.DepartmentSpaceInput
-		if err := decodeJSON(r, &in); err != nil {
+		if err := decodeJSONLenient(r, &in); err != nil {
 			httperror.Render(w, r, err)
 			return
 		}

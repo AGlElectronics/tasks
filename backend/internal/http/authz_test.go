@@ -56,6 +56,12 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil)
+}
+
+// newHarnessWith lets a test adjust the config before the router is built.
+func newHarnessWith(t *testing.T, tweak func(*config.Config)) *harness {
+	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set; skipping authorization tests")
@@ -101,6 +107,9 @@ func newHarness(t *testing.T) *harness {
 	cfg := &config.Config{
 		AppEnv:   "development",
 		AuthMode: config.AuthModeDev,
+	}
+	if tweak != nil {
+		tweak(cfg)
 	}
 	router := NewRouter(Deps{
 		Config: cfg,

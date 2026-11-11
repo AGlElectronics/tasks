@@ -46,6 +46,10 @@ export type Space = {
   created_by?: string;
   created_at: string;
   everyone_level: AccessLevel | null;
+  /** Hidden from the sidebar; HR's department hook archives department spaces. */
+  archived: boolean;
+  /** HR department this space belongs to, or null for spaces made by hand. */
+  department_id: string | null;
   lists: List[];
   folders: Folder[];
   statuses: Status[];
@@ -190,6 +194,7 @@ export type SpaceInput = {
   color?: string;
   description?: string;
   everyone_level?: AccessLevel | null;
+  archived?: boolean;
 };
 export type StatusInput = { id?: string; name: string; color: string; category: Category };
 
@@ -219,8 +224,11 @@ export type TaskPatch = {
   version?: number;
 };
 
-export const listSpaces = (signal?: AbortSignal) =>
-  apiRequest<{ spaces: Space[] }>('/api/v1/spaces', { signal }).then((r) => r.spaces);
+export const listSpaces = (signal?: AbortSignal, includeArchived?: boolean) =>
+  apiRequest<{ spaces: Space[]; truncated: boolean }>('/api/v1/spaces', {
+    signal,
+    query: { archived: includeArchived ? 1 : undefined },
+  }).then((r) => r.spaces);
 export const getSpace = (id: string, signal?: AbortSignal) =>
   apiRequest<Space>(`/api/v1/spaces/${id}`, { signal });
 export const createSpace = (body: SpaceInput) =>

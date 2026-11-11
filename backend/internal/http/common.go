@@ -28,8 +28,21 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 // typed BadRequest on malformed input so handlers can hand the error
 // straight to httperror.Render.
 func decodeJSON(r *http.Request, dst any) error {
+	return decode(r, dst, true)
+}
+
+// decodeJSONLenient ignores unknown fields. Only for service-to-service
+// contracts where the caller may add fields before Tasks knows them (HR's
+// department hook).
+func decodeJSONLenient(r *http.Request, dst any) error {
+	return decode(r, dst, false)
+}
+
+func decode(r *http.Request, dst any, strict bool) error {
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
+	if strict {
+		dec.DisallowUnknownFields()
+	}
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
 			return httperror.BadRequest("request body is empty")

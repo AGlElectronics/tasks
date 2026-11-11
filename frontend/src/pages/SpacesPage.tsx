@@ -110,7 +110,13 @@ export function SpacesPage() {
   const { canAny } = useMe();
   const canCreate = canAny(PERMS.spaceCreate, PERMS.spaceManage);
   const [creating, setCreating] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const spaces = useQuery({ queryKey: ['spaces'], queryFn: ({ signal }) => listSpaces(signal) });
+  const archived = useQuery({
+    queryKey: ['spaces', 'archived'],
+    queryFn: ({ signal }) => listSpaces(signal, true).then((all) => all.filter((sp) => sp.archived)),
+    enabled: showArchived,
+  });
 
   return (
     <PageContainer>
@@ -174,6 +180,35 @@ export function SpacesPage() {
           })}
         </div>
       )}
+      <div className="mt-8">
+        <button
+          type="button"
+          onClick={() => setShowArchived((v) => !v)}
+          className="text-xs font-semibold text-muted-foreground hover:text-foreground"
+        >
+          {showArchived ? 'Hide archived spaces' : 'Show archived spaces'}
+        </button>
+        {showArchived ? (
+          archived.isLoading ? (
+            <LoadingRow />
+          ) : (archived.data ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground mt-2">No archived spaces.</p>
+          ) : (
+            <ul className="mt-2 space-y-1">
+              {archived.data!.map((sp) => (
+                <li key={sp.id} className="text-sm">
+                  <Link to="/spaces/$spaceId" params={{ spaceId: sp.id }} className="hover:underline">
+                    {sp.name}
+                  </Link>{' '}
+                  <span className="text-xs text-muted-foreground">
+                    {sp.key} · archived{sp.department_id ? ' with its HR department' : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )
+        ) : null}
+      </div>
     </PageContainer>
   );
 }

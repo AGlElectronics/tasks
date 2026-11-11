@@ -337,12 +337,25 @@ function SpaceSettingsCard({ space }: { space: Space }) {
       navigate({ to: '/spaces' });
     },
   });
+  const archive = useMutation({
+    mutationFn: (archived: boolean) => updateSpace(space.id, { archived }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['spaces'] });
+      qc.invalidateQueries({ queryKey: ['space', space.id] });
+    },
+  });
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Space settings</CardTitle>
       </CardHeader>
+      {space.archived ? (
+        <p className="mx-6 mb-3 rounded-md bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+          This space is archived: it is hidden from the sidebar and search.
+          {space.department_id ? ' It follows its HR department; restoring the department in HR restores it.' : ''}
+        </p>
+      ) : null}
       <CardContent>
         <form
           className="space-y-3"
@@ -388,6 +401,9 @@ function SpaceSettingsCard({ space }: { space: Space }) {
           <div className="flex justify-between">
             <Button type="submit" disabled={save.isPending}>
               Save
+            </Button>
+            <Button type="button" variant="outline" disabled={archive.isPending} onClick={() => archive.mutate(!space.archived)}>
+              {space.archived ? 'Restore space' : 'Archive space'}
             </Button>
             <Button
               type="button"

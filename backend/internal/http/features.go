@@ -218,7 +218,7 @@ func (h *taskHandler) markRead(r *http.Request, u *auth.User) (int, any, error) 
 func (h *taskHandler) search(r *http.Request, u *auth.User) (int, any, error) {
 	q := r.URL.Query().Get("q")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	spaces, _, err := h.svc.ListSpaces(r.Context())
+	spaces, _, err := h.svc.ListSpaces(r.Context(), false)
 	if err != nil {
 		return 0, nil, err
 	}

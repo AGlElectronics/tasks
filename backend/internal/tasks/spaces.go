@@ -67,7 +67,12 @@ type Space struct {
 	CreatedBy   *uuid.UUID `json:"created_by,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	// EveryoneLevel is the level every signed-in user gets; nil = closed.
-	EveryoneLevel *string   `json:"everyone_level"`
+	EveryoneLevel *string `json:"everyone_level"`
+	// Archived spaces are hidden from the sidebar and search.
+	Archived bool `json:"archived"`
+	// DepartmentID is the HR department this space belongs to (set by the
+	// department hook); nil for spaces made by hand.
+	DepartmentID  *uuid.UUID `json:"department_id"`
 	Lists         []List    `json:"lists"`
 	Folders       []Folder  `json:"folders"`
 	Statuses      []Status  `json:"statuses"`
@@ -86,19 +91,21 @@ var defaultStatuses = []Status{
 const MaxSpaces = 1000
 
 // ListSpaces returns up to MaxSpaces spaces with their lists and statuses
-// (sidebar). truncated reports that more spaces exist.
-func (s *Service) ListSpaces(ctx context.Context) (spaces []Space, truncated bool, err error) {
-	spaces, err = s.listSpaces(ctx)
+// (sidebar), archived ones only when asked. truncated reports that more
+// spaces exist.
+func (s *Service) ListSpaces(ctx context.Context, includeArchived bool) (spaces []Space, truncated bool, err error) {
+	spaces, err = s.listSpaces(ctx, includeArchived)
 	if len(spaces) > MaxSpaces {
 		spaces, truncated = spaces[:MaxSpaces], true
 	}
 	return spaces, truncated, err
 }
 
-func (s *Service) listSpaces(ctx context.Context) ([]Space, error) {
+func (s *Service) listSpaces(ctx context.Context, includeArchived bool) ([]Space, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, organization_id, name, key, color, description, created_by, created_at, everyone_level
-		  FROM spaces ORDER BY position, name LIMIT $1`, MaxSpaces+1)
+		SELECT id, organization_id, name, key, color, description, created_by, created_at, everyone_level,
+		       archived_at IS NOT NULL, department_id
+		  FROM spaces WHERE $2 OR archived_at IS NULL ORDER BY position, name LIMIT $1`, MaxSpaces+1, includeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +113,7 @@ func (s *Service) listSpaces(ctx context.Context) ([]Space, error) {
 	index := map[uuid.UUID]int{}
 	for rows.Next() {
 		var sp Space
-		if err := rows.Scan(&sp.ID, &sp.OrgID, &sp.Name, &sp.Key, &sp.Color, &sp.Description, &sp.CreatedBy, &sp.CreatedAt, &sp.EveryoneLevel); err != nil {
+		if err := rows.Scan(&sp.ID, &sp.OrgID, &sp.Name, &sp.Key, &sp.Color, &sp.Description, &sp.CreatedBy, &sp.CreatedAt, &sp.EveryoneLevel, &sp.Archived, &sp.DepartmentID); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -241,8 +248,10 @@ func (s *Service) statuses(ctx context.Context, q interface {
 func (s *Service) GetSpace(ctx context.Context, id uuid.UUID) (Space, error) {
 	var sp Space
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, organization_id, name, key, color, description, created_by, created_at, everyone_level FROM spaces WHERE id = $1`, id,
-	).Scan(&sp.ID, &sp.OrgID, &sp.Name, &sp.Key, &sp.Color, &sp.Description, &sp.CreatedBy, &sp.CreatedAt, &sp.EveryoneLevel)
+		SELECT id, organization_id, name, key, color, description, created_by, created_at, everyone_level,
+		       archived_at IS NOT NULL, department_id
+		  FROM spaces WHERE id = $1`, id,
+	).Scan(&sp.ID, &sp.OrgID, &sp.Name, &sp.Key, &sp.Color, &sp.Description, &sp.CreatedBy, &sp.CreatedAt, &sp.EveryoneLevel, &sp.Archived, &sp.DepartmentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Space{}, httperror.NotFound("space")
 	}
@@ -267,6 +276,9 @@ type SpaceInput struct {
 	Color         *string  `json:"color"`
 	Description   *string  `json:"description"`
 	EveryoneLevel Nullable `json:"everyone_level"`
+	// Archived hides or restores the space. For department spaces HR's
+	// next save wins (the hook sends the department's archived state).
+	Archived *bool `json:"archived"`
 }
 
 func (in *SpaceInput) validate(create bool) error {
@@ -376,8 +388,11 @@ func (s *Service) UpdateSpace(ctx context.Context, id uuid.UUID, in SpaceInput) 
 		UPDATE spaces SET name = COALESCE($2, name), key = COALESCE($3, key), color = COALESCE($4, color),
 		       description = COALESCE($5, description),
 		       everyone_level = CASE WHEN $6 THEN $7 ELSE everyone_level END,
+		       archived_at = CASE WHEN $8::bool IS NULL THEN archived_at
+		                          WHEN $8 THEN COALESCE(archived_at, now())
+		                          ELSE NULL END,
 		       updated_at = now()
-		 WHERE id = $1`, id, name, key, in.Color, in.Description, in.EveryoneLevel.Set, in.EveryoneLevel.Value)
+		 WHERE id = $1`, id, name, key, in.Color, in.Description, in.EveryoneLevel.Set, in.EveryoneLevel.Value, in.Archived)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Space{}, httperror.Conflict("another space already uses this key")

@@ -18,7 +18,14 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 - Spaces with lists and boards. A task needs only a title; due dates,
   priorities, checklists and tags are optional.
 - Each HR department gets its own space automatically, shared with the
-  department's group, through the department hook HR calls.
+  department's group, through the department hook HR calls
+  (`POST /api/internal/departments`, HR's `DEPARTMENT_HOOKS`) when a
+  department is created or saved. Renames follow HR; `"archived": true`
+  archives the space and a later save without it restores it. Unknown
+  fields in HR's request are ignored, so HR can add fields first.
+- Spaces can be archived (by a space manager or HR's department hook): they
+  leave the sidebar and search, keep every task, and are listed under
+  *Show archived spaces* (`GET /api/v1/spaces?archived=1`).
 - My Work lists each person's tasks by due date, and the Inbox tells them
   when they are assigned, mentioned, or a task they follow moves.
 - Tasks move between lists and spaces, a list can be shared with another

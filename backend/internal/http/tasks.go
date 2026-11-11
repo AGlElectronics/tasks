@@ -233,7 +233,7 @@ func view(sp tasks.Space, level tasks.Level) spaceView {
 // spaces that only show through lists shared with them. Private lists only
 // appear for managers and the directly granted.
 func (h *taskHandler) listSpaces(r *http.Request, u *auth.User) (int, any, error) {
-	spaces, truncated, err := h.svc.ListSpaces(r.Context())
+	spaces, truncated, err := h.svc.ListSpaces(r.Context(), r.URL.Query().Get("archived") == "1")
 	if err != nil {
 		return 0, nil, err
 	}
