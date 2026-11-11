@@ -4,8 +4,9 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { AtSign, Bell, CheckCheck, MessageSquare, UserPlus } from 'lucide-react';
+import { AtSign, Bell, CalendarClock, CheckCheck, Mail, MessageSquare, UserPlus } from 'lucide-react';
 import { getInbox, markRead, type Notification } from '@/api/tasks';
+import { EmailPrefs } from '@/components/EmailPrefs';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
@@ -21,6 +22,8 @@ function kindIcon(kind: string) {
       return UserPlus;
     case 'comment':
       return MessageSquare;
+    case 'due_soon':
+      return CalendarClock;
     default:
       return Bell;
   }
@@ -62,6 +65,7 @@ function Row({ n, onOpen }: { n: Notification; onOpen: (n: Notification) => void
 export function InboxPage() {
   const qc = useQueryClient();
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [showEmail, setShowEmail] = useState(false);
   const inbox = useQuery({
     queryKey: ['inbox', unreadOnly],
     queryFn: ({ signal }) => getInbox(signal, unreadOnly),
@@ -81,6 +85,9 @@ export function InboxPage() {
         description="Mentions, assignments and updates on tasks you follow."
         actions={
           <>
+            <Button variant="ghost" size="sm" onClick={() => setShowEmail((v) => !v)}>
+              <Mail className="w-4 h-4" /> Email settings
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => setUnreadOnly((v) => !v)}>
               {unreadOnly ? 'Show all' : 'Unread only'}
             </Button>
@@ -90,6 +97,7 @@ export function InboxPage() {
           </>
         }
       />
+      {showEmail ? <EmailPrefs /> : null}
       {inbox.isLoading ? (
         <LoadingRow />
       ) : inbox.isError ? (

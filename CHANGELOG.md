@@ -75,6 +75,29 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
   Building from source needs Go 1.27.3 or newer.
+- Email notifications. Each person picks which Inbox notifications also
+  come by email (*Inbox → Email settings*, `GET`/`PUT
+  /api/v1/me/notifications`; default: assigned, mentioned, due soon).
+  Emails wait two minutes, bundle what happened meanwhile and skip what
+  was already read in the app. SMTP comes from Den when the module is
+  paired and Den sends it, otherwise from the new `SMTP_HOST`,
+  `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`,
+  `SMTP_FROM_NAME` and `SMTP_SECURITY` (`starttls`, `tls` or `none`);
+  `TASKS_PUBLIC_URL` puts links in the emails. Admins send a test email
+  from *Settings* (`POST /api/v1/settings/email/test`).
+- Due-soon reminders: assignees get an Inbox notification (and email, if
+  chosen) when an open task is due within `reminders.due_soon_days`
+  (default 1 day, and on the day), once per due date.
+- Retention: deleted tasks are purged from the trash after
+  `retention.trash_days` (30), read notifications after
+  `retention.notification_days` (90), audit entries after
+  `retention.audit_days` (730) and automation runs after
+  `retention.automation_run_days` (90); `0` keeps forever. The defaults are
+  placeholders pending legal review. Admins change them on *Settings*
+  (`GET`/`PUT /api/v1/settings`); when paired, values Den sends in its
+  module settings win and are read-only in Tasks. Purges by retention are
+  audited with the actor *System*, and purging a task (by hand or by
+  retention) now also deletes its attachment files from S3.
 - Admins read the audit log in the web app (*Settings → Audit log*) or at
   `GET /api/v1/audit` (`settings.manage`): deletes, purges, grants given
   and removed, archived and restored spaces and settings changes, newest

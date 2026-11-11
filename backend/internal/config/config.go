@@ -17,6 +17,7 @@ import (
 
 	"github.com/AGlElectronics/tasks/backend/internal/clientip"
 	"github.com/AGlElectronics/tasks/backend/internal/denlink"
+	"github.com/AGlElectronics/tasks/backend/internal/mail"
 )
 
 // AuthMode selects how incoming requests are authenticated.
@@ -63,6 +64,22 @@ type Config struct {
 	S3SecretAccessKey string
 	S3Region          string
 	S3UsePathStyle    bool
+
+	// SMTP for email notifications when Den does not send its own (the
+	// module is standalone, or Den's bundle has no smtp). Empty host: no
+	// email unless Den provides it.
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPFromName string
+	// SMTPSecurity is starttls (default), tls (implicit TLS, port 465) or
+	// none (plain, only for a local test server such as Mailpit).
+	SMTPSecurity string
+	// PublicBaseURL is the web app's address, used for links in emails
+	// (TASKS_PUBLIC_URL). Empty: emails carry the task key without a link.
+	PublicBaseURL string
 
 	// Brand provider
 	BrandLocalPath string // optional brand.json; Den's brand overlays it once paired
@@ -116,6 +133,15 @@ func Load() (*Config, error) {
 		S3Region:          getEnv("S3_REGION", "us-east-1"),
 		S3UsePathStyle:    getEnvBool("S3_USE_PATH_STYLE", true),
 
+		SMTPHost:      getEnv("SMTP_HOST", ""),
+		SMTPPort:      getEnvInt("SMTP_PORT", 0),
+		SMTPUsername:  getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:  getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:      getEnv("SMTP_FROM", ""),
+		SMTPFromName:  getEnv("SMTP_FROM_NAME", "Tasks"),
+		SMTPSecurity:  strings.ToLower(getEnv("SMTP_SECURITY", "starttls")),
+		PublicBaseURL: strings.TrimRight(getEnv("TASKS_PUBLIC_URL", ""), "/"),
+
 		BrandLocalPath: getEnv("BRAND_LOCAL_PATH", ""),
 		DenInternalURL: getEnv("DEN_INTERNAL_URL", ""),
 		DenMode:        denlink.Mode(getEnv("DEN_MODE", string(denlink.ModeStandalone))),
@@ -164,10 +190,39 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Sprintf("AUTH_MODE must be 'oidc' or 'dev', got %q", c.AuthMode))
 	}
 
+	switch c.SMTPSecurity {
+	case "starttls", "tls", "none":
+	default:
+		errs = append(errs, fmt.Sprintf("SMTP_SECURITY must be starttls, tls or none, got %q", c.SMTPSecurity))
+	}
+	if c.SMTPHost != "" && c.SMTPFrom == "" {
+		errs = append(errs, "SMTP_FROM is required when SMTP_HOST is set")
+	}
+
 	if len(errs) > 0 {
 		return errors.New("invalid config: " + strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func getEnvInt(key string, fallback int) int {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+// SMTP is Tasks' own SMTP settings (used when Den sends none).
+func (c *Config) SMTP() mail.Config {
+	return mail.Config{
+		Host: c.SMTPHost, Port: c.SMTPPort, Username: c.SMTPUsername, Password: c.SMTPPassword,
+		From: c.SMTPFrom, FromName: c.SMTPFromName, Security: c.SMTPSecurity,
+	}.Normalized()
 }
 
 // S3Enabled reports whether attachment storage is configured.

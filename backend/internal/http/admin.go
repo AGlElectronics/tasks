@@ -51,6 +51,52 @@ func (h *taskHandler) audit(r *http.Request, _ *auth.User) (int, any, error) {
 	return http.StatusOK, pagedBody{body: map[string]any{"entries": out}, next: next}, nil
 }
 
+// getSettings serves GET /api/v1/settings: effective retention and
+// reminder settings, where each comes from, and the email status.
+func (h *taskHandler) getSettings(r *http.Request, _ *auth.User) (int, any, error) {
+	v, err := h.svc.Settings(r.Context())
+	return http.StatusOK, v, err
+}
+
+// putSettings serves PUT /api/v1/settings with a partial nested body.
+func (h *taskHandler) putSettings(r *http.Request, u *auth.User) (int, any, error) {
+	var p tasks.SettingsPatch
+	if err := decodeJSON(r, &p); err != nil {
+		return 0, nil, err
+	}
+	v, err := h.svc.UpdateSettings(r.Context(), u.ID, p)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, v, nil
+}
+
+// testEmail serves POST /api/v1/settings/email/test: one email to the
+// calling admin's own address.
+func (h *taskHandler) testEmail(r *http.Request, u *auth.User) (int, any, error) {
+	if err := h.svc.SendTestEmail(r.Context(), h.send, u.Email); err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, map[string]any{"sent_to": u.Email}, nil
+}
+
+// notificationPrefs serves GET and PUT /api/v1/me/notifications.
+func (h *taskHandler) notificationPrefs(r *http.Request, u *auth.User) (int, any, error) {
+	if r.Method == http.MethodGet {
+		p, err := h.svc.NotificationPreferences(r.Context(), u.ID)
+		return http.StatusOK, p, err
+	}
+	var in tasks.NotificationPrefs
+	if err := decodeJSON(r, &in); err != nil {
+		return 0, nil, err
+	}
+	p, err := h.svc.SetNotificationPreferences(r.Context(), u.ID, in)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, p, nil
+}
+
 func parseTime(raw string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, raw); err == nil {
 		return t, nil

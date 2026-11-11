@@ -1185,29 +1185,10 @@ func (s *Service) RestoreTask(ctx context.Context, actor, id uuid.UUID) (Task, e
 
 // PurgeTask permanently deletes a trashed task (manage only; the UI calls
 // this from the trash view). The audit row from the original delete stays.
-func (s *Service) PurgeTask(ctx context.Context, actor, id uuid.UUID) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	var key, title string
-	err = tx.QueryRow(ctx, `
-		SELECT sp.key || '-' || t.number, t.title FROM tasks t JOIN spaces sp ON sp.id = t.space_id
-		 WHERE t.id = $1 AND t.deleted_at IS NOT NULL`, id).Scan(&key, &title)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return httperror.NotFound("task")
-	}
-	if err != nil {
-		return err
-	}
-	if err := writeAudit(ctx, tx, &actor, "task", id, "purged", map[string]any{"key": key, "title": title}); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, id); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+// It returns the S3 keys of the task's attachments for the caller to
+// remove.
+func (s *Service) PurgeTask(ctx context.Context, actor, id uuid.UUID) ([]string, error) {
+	return s.purge(ctx, &actor, id, nil)
 }
 
 // AddComment posts a comment on a task. Mentioned users get a "mention"

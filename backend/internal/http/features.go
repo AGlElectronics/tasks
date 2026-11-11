@@ -565,7 +565,16 @@ func (h *taskHandler) purgeTask(r *http.Request, u *auth.User) (int, any, error)
 	if err != nil {
 		return 0, nil, err
 	}
-	return http.StatusNoContent, nil, h.svc.PurgeTask(r.Context(), u.ID, id)
+	keys, err := h.svc.PurgeTask(r.Context(), u.ID, id)
+	if err != nil {
+		return 0, nil, err
+	}
+	if h.files != nil {
+		for _, k := range keys {
+			_ = h.files.Remove(r.Context(), k) // an orphaned object is harmless
+		}
+	}
+	return http.StatusNoContent, nil, nil
 }
 
 // ----------------------------------------------------------------------------

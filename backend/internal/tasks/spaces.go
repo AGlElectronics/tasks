@@ -17,12 +17,20 @@ import (
 
 	"github.com/AGlElectronics/tasks/backend/internal/domain"
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
+	"github.com/AGlElectronics/tasks/backend/internal/mail"
 )
 
 // Service is safe for concurrent use.
 type Service struct {
 	pool *pgxpool.Pool
+	// envSMTP is Tasks' own SMTP (SMTP_*), used when Den sends none.
+	envSMTP mail.Config
+	// publicURL is TASKS_PUBLIC_URL, for links in emails.
+	publicURL string
 }
+
+// SetPublicURL sets the web app address used for links in emails.
+func (s *Service) SetPublicURL(u string) { s.publicURL = strings.TrimRight(u, "/") }
 
 // NewService constructs the task service.
 func NewService(pool *pgxpool.Pool) *Service {

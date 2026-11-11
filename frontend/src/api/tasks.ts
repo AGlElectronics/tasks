@@ -346,6 +346,17 @@ export const getUnreadCount = (signal?: AbortSignal) =>
 export const markRead = (ids?: string[]) =>
   apiRequest<void>('/api/v1/inbox/read', { method: 'POST', body: { ids } });
 
+// Email notifications: which Inbox kinds also come by email.
+export const NOTIFICATION_KINDS = ['assigned', 'mention', 'comment', 'status', 'due_soon', 'automation'] as const;
+export type NotificationPrefs = { email: boolean; email_kinds: string[]; has_address?: boolean };
+export const getNotificationPrefs = (signal?: AbortSignal) =>
+  apiRequest<NotificationPrefs>('/api/v1/me/notifications', { signal });
+export const setNotificationPrefs = (p: NotificationPrefs) =>
+  apiRequest<NotificationPrefs>('/api/v1/me/notifications', {
+    method: 'PUT',
+    body: { email: p.email, email_kinds: p.email_kinds },
+  });
+
 // Search (TASK-8)
 export const searchTasks = (q: string, signal?: AbortSignal) =>
   apiRequest<{ results: SearchHit[] }>('/api/v1/search', { signal, query: { q } }).then((r) => r.results);

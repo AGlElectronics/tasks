@@ -3,8 +3,9 @@ import { ScrollText } from 'lucide-react';
 import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DenConnection } from '@/components/DenConnection';
+import { ModuleSettingsCard } from '@/components/ModuleSettingsCard';
 
-/** Module settings: Den pairing and the audit log. */
+/** Module settings: Den pairing, retention, reminders, email and the audit log. */
 export function SettingsPage() {
   return (
     <PageContainer>
@@ -14,6 +15,7 @@ export function SettingsPage() {
       />
       <div className="max-w-2xl space-y-6">
         <DenConnection base="/api/v1/den" />
+        <ModuleSettingsCard />
         <Card>
           <CardHeader>
             <CardTitle>Audit log</CardTitle>

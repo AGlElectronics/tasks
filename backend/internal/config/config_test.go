@@ -12,6 +12,7 @@ func clearEnv(t *testing.T) {
 	for _, k := range []string{
 		"APP_ENV", "AUTH_MODE", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_AUDIENCE",
 		"DATABASE_URL", "DEN_MODE", "TRUSTED_PROXY_CIDRS",
+		"SMTP_HOST", "SMTP_PORT", "SMTP_FROM", "SMTP_SECURITY", "TASKS_PUBLIC_URL",
 	} {
 		t.Setenv(k, "")
 	}
@@ -39,6 +40,30 @@ func TestDefaultsAreProductionOIDC(t *testing.T) {
 	}
 	if cfg.AppEnv != "production" || cfg.AuthMode != AuthModeOIDC {
 		t.Fatalf("defaults: APP_ENV=%q AUTH_MODE=%q", cfg.AppEnv, cfg.AuthMode)
+	}
+}
+
+func TestSMTPSettings(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("AUTH_MODE", "dev")
+	t.Setenv("SMTP_HOST", "mail.example.org")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SMTP_FROM is required") {
+		t.Fatalf("SMTP_HOST without SMTP_FROM must fail, got %v", err)
+	}
+	t.Setenv("SMTP_FROM", "tasks@example.org")
+	t.Setenv("SMTP_SECURITY", "ssl")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SMTP_SECURITY") {
+		t.Fatalf("unknown SMTP_SECURITY must fail, got %v", err)
+	}
+	t.Setenv("SMTP_SECURITY", "TLS")
+	t.Setenv("TASKS_PUBLIC_URL", "https://tasks.example.org/")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.SMTP(); s.Security != "tls" || s.Port != 465 || s.FromName != "Tasks" || cfg.PublicBaseURL != "https://tasks.example.org" {
+		t.Fatalf("SMTP config: %+v %q", s, cfg.PublicBaseURL)
 	}
 }
 

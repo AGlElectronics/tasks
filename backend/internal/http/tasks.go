@@ -31,6 +31,7 @@ import (
 type taskHandler struct {
 	svc   *tasks.Service
 	files *files.Client // nil = attachments not configured
+	send  tasks.SendFunc
 }
 
 func caller(r *http.Request) (*auth.User, error) {

@@ -26,6 +26,7 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 	"github.com/AGlElectronics/tasks/backend/internal/files"
 	httpx "github.com/AGlElectronics/tasks/backend/internal/http"
+	"github.com/AGlElectronics/tasks/backend/internal/mail"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 	"github.com/AGlElectronics/tasks/backend/internal/tlscert"
 )
@@ -94,26 +95,6 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 	}
 	go den.Run(ctx)
 
-	// Due-date automations sweep (TASK-22): every minute, fire
-	// "due approaching" rules for tasks whose due date is within reach.
-	sweepSvc := tasks.NewService(pool)
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if n, err := sweepSvc.RunDueSweep(ctx); err != nil {
-					logger.Error().Err(err).Msg("due-date automation sweep failed")
-				} else if n > 0 {
-					logger.Info().Int("runs", n).Msg("due-date automations fired")
-				}
-			}
-		}
-	}()
-
 	// Attachment storage (TASK-7). Optional: nil means "not configured".
 	s3Ctx, cancelS3 := context.WithTimeout(ctx, 30*time.Second)
 	filesClient, err := files.New(s3Ctx, cfg)
@@ -126,6 +107,54 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 	} else {
 		logger.Info().Msg("S3 not configured; attachments disabled")
 	}
+
+	// Background jobs run in this process; Tasks runs one backend replica
+	// (docs/adr/0001-single-backend-replica.md).
+	jobs := tasks.NewService(pool)
+	jobs.SetEnvSMTP(cfg.SMTP())
+	jobs.SetPublicURL(cfg.PublicBaseURL)
+	if cfg.SMTPHost != "" {
+		logger.Info().Str("host", cfg.SMTPHost).Msg("own SMTP configured (Den's SMTP wins when paired and sent)")
+	}
+	every := func(name string, interval time.Duration, run func(context.Context) (int, error)) {
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if n, err := run(ctx); err != nil {
+						logger.Error().Err(err).Str("job", name).Msg("background job failed")
+					} else if n > 0 {
+						logger.Info().Int("count", n).Str("job", name).Msg("background job done")
+					}
+				}
+			}
+		}()
+	}
+	// "Due approaching" automations (TASK-22).
+	every("due_automations", time.Minute, jobs.RunDueSweep)
+	every("email_outbox", time.Minute, func(ctx context.Context) (int, error) {
+		return jobs.RunEmailOutbox(ctx, mail.Send, tasks.EmailDelay)
+	})
+	every("due_reminders", 15*time.Minute, jobs.RunDueReminders)
+	every("retention", time.Hour, func(ctx context.Context) (int, error) {
+		res, err := jobs.RunRetention(ctx)
+		if filesClient != nil {
+			for _, k := range res.ObjectKeys {
+				if rerr := filesClient.Remove(ctx, k); rerr != nil {
+					logger.Warn().Err(rerr).Str("key", k).Msg("retention: could not remove attachment object")
+				}
+			}
+		}
+		if res.Tasks+res.Notifications+res.Audit+res.AutomationRuns > 0 {
+			logger.Info().Int("tasks", res.Tasks).Int("notifications", res.Notifications).
+				Int("audit", res.Audit).Int("automation_runs", res.AutomationRuns).Msg("retention applied")
+		}
+		return 0, err
+	})
 
 	router := httpx.NewRouter(httpx.Deps{
 		Config:       cfg,

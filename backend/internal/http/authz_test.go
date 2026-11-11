@@ -52,6 +52,13 @@ type harness struct {
 	t      *testing.T
 	router http.Handler
 	pool   *pgxpool.Pool
+	deps   Deps
+}
+
+// rebuild changes the router's dependencies (for example a fake mailer).
+func (h *harness) rebuild(tweak func(*Deps)) {
+	tweak(&h.deps)
+	h.router = NewRouter(h.deps, "test")
 }
 
 func newHarness(t *testing.T) *harness {
@@ -111,14 +118,14 @@ func newHarnessWith(t *testing.T, tweak func(*config.Config)) *harness {
 	if tweak != nil {
 		tweak(cfg)
 	}
-	router := NewRouter(Deps{
+	deps := Deps{
 		Config: cfg,
 		Pool:   pool,
 		Logger: zerolog.Nop(),
 		Brand:  brand.New(cfg),
 		Access: access,
-	}, "test")
-	return &harness{t: t, router: router, pool: pool}
+	}
+	return &harness{t: t, router: NewRouter(deps, "test"), pool: pool, deps: deps}
 }
 
 // as is a request principal: dev user name plus simulated IdP groups.

@@ -47,6 +47,7 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 	"github.com/AGlElectronics/tasks/backend/internal/domain"
 	"github.com/AGlElectronics/tasks/backend/internal/files"
+	"github.com/AGlElectronics/tasks/backend/internal/mail"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 )
 
@@ -62,6 +63,8 @@ type Deps struct {
 	Den *denlink.Client
 	// Files is attachment storage; nil means attachments are unavailable.
 	Files *files.Client
+	// SendMail delivers email; nil means mail.Send (tests record instead).
+	SendMail tasks.SendFunc
 }
 
 // NewRouter builds the chi router with middleware, CORS, and routes.
@@ -118,7 +121,14 @@ func NewRouter(deps Deps, version string) http.Handler {
 		den = denlink.New(deps.Pool, denlink.Config{Slug: "tasks", Version: version, Mode: deps.Config.DenMode}, deps.Logger)
 	}
 	brandH := &brandHandler{provider: deps.Brand, den: den}
-	th := &taskHandler{svc: tasks.NewService(deps.Pool), files: deps.Files}
+	svc := tasks.NewService(deps.Pool)
+	svc.SetEnvSMTP(deps.Config.SMTP())
+	svc.SetPublicURL(deps.Config.PublicBaseURL)
+	send := deps.SendMail
+	if send == nil {
+		send = mail.Send
+	}
+	th := &taskHandler{svc: svc, files: deps.Files, send: send}
 
 	// Orchestrator probes — unauthenticated, served from the root so they
 	// don't collide with any /api/* middleware.
@@ -167,7 +177,12 @@ func NewRouter(deps Deps, version string) http.Handler {
 				secure.Group(func(admin chi.Router) {
 					admin.Use(requirePermission(domain.PermSettingsManage))
 					admin.Get("/audit", handle(th.audit))
+					admin.Get("/settings", handle(th.getSettings))
+					admin.Put("/settings", handle(th.putSettings))
+					admin.Post("/settings/email/test", handle(th.testEmail))
 				})
+				secure.Get("/me/notifications", handle(th.notificationPrefs))
+				secure.Put("/me/notifications", handle(th.notificationPrefs))
 
 				secure.Get("/users", handle(th.people))
 				secure.Get("/my-work", handle(th.myWork))
