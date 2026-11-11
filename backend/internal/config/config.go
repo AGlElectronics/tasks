@@ -7,7 +7,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/AGlElectronics/tasks/backend/internal/authbase"
-	"github.com/AGlElectronics/tasks/backend/internal/clientip"
 	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
@@ -103,10 +101,12 @@ type Config struct {
 
 	// HTTP
 	CORSAllowedOrigins []string
-	// TrustedProxyCIDRs lists the proxies whose X-Forwarded-For entries are
-	// believed when working out the client IP (TRUSTED_PROXY_CIDRS).
-	TrustedProxyCIDRs []netip.Prefix
-	ShutdownTimeout   time.Duration
+	ShutdownTimeout    time.Duration
+
+	// auth is the shared AUTH_MODE/APP_ENV guard, including the trusted
+	// proxies from TRUSTED_PROXY_CIDRS. Tests that build a Config by hand
+	// leave it zero; Auth fills AppEnv and AuthMode from the fields above.
+	auth authbase.Config
 }
 
 // Load reads environment variables (plus an optional .env file) and returns
@@ -120,7 +120,7 @@ func Load() (*Config, error) {
 	// their errors together with ours.
 	// Fail closed: a deployment that sets neither APP_ENV nor AUTH_MODE
 	// runs as production with OIDC, never with trusted dev headers.
-	ab, _ := authbase.FromEnv(os.Getenv)
+	ab, abErr := authbase.FromEnv(os.Getenv)
 	groups, _ := groupmatch.FromEnv(os.Getenv)
 	den, _ := denlink.FromEnv("tasks", "", os.Getenv)
 
@@ -166,21 +166,16 @@ func Load() (*Config, error) {
 
 		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3009")),
 		ShutdownTimeout:    getEnvDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
+		auth:               ab,
 	}
 
-	trusted, err := clientip.ParseCIDRs(getEnv("TRUSTED_PROXY_CIDRS", clientip.DefaultTrustedProxies))
-	if err != nil {
-		return nil, fmt.Errorf("invalid config: TRUSTED_PROXY_CIDRS: %w", err)
-	}
-	cfg.TrustedProxyCIDRs = trusted
-
-	if err := cfg.validate(); err != nil {
+	if err := cfg.validate(abErr); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
-func (c *Config) validate() error {
+func (c *Config) validate(authErr error) error {
 	var errs []string
 
 	if c.DatabaseURL == "" {
@@ -191,6 +186,13 @@ func (c *Config) validate() error {
 	}
 	if err := c.Groups.Validate(); err != nil {
 		errs = append(errs, err.Error())
+	}
+	// FromEnv checks AUTH_MODE and TRUSTED_PROXY_CIDRS. Report a bad proxy
+	// list as well as a bad mode, without repeating the same sentence.
+	if authErr != nil {
+		if v := c.Auth().Validate(); v == nil || v.Error() != authErr.Error() {
+			errs = append(errs, authErr.Error())
+		}
 	}
 	if err := c.Auth().Validate(); err != nil {
 		errs = append(errs, err.Error())
@@ -230,9 +232,17 @@ func getEnvInt(key string, fallback int) int {
 	return parsed
 }
 
-// Auth is the shared AUTH_MODE/APP_ENV guard for this configuration.
+// Auth is the shared AUTH_MODE/APP_ENV guard for this configuration,
+// including the trusted proxies loaded from TRUSTED_PROXY_CIDRS.
 func (c *Config) Auth() authbase.Config {
-	return authbase.Config{AppEnv: c.AppEnv, AuthMode: c.AuthMode}
+	a := c.auth
+	if c.AppEnv != "" {
+		a.AppEnv = authbase.NormalizeAppEnv(c.AppEnv)
+	}
+	if c.AuthMode != "" {
+		a.AuthMode = c.AuthMode
+	}
+	return a
 }
 
 // SMTP is Tasks' own SMTP settings (used when Den sends none).

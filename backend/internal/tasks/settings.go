@@ -3,12 +3,10 @@ package tasks
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
@@ -17,8 +15,9 @@ import (
 // Module settings: retention and reminders. Each value comes from, weakest
 // first: the built-in default, Tasks' own setting (module_settings, edited
 // on Settings), and Den's module settings when the module is paired and
-// Den sends the key (bundle.module_settings). Den's value wins and cannot
-// be changed in Tasks.
+// Den sends the key (client.ModuleSettings). Den's value wins and cannot
+// be changed in Tasks. The contract name is under tasks.* (tasks.trash_days);
+// the name Tasks stores (retention.trash_days) is still accepted.
 //
 // The retention defaults are placeholders pending legal review; set them
 // to what your organisation's data-protection rules say.
@@ -72,44 +71,63 @@ type EmailStatus struct {
 	Security   string `json:"security,omitempty"`
 }
 
-// denState reads what Den pushed in the integration bundle, from the
-// stored pairing (den_link). Both are nil when standalone or when Den does
-// not send them.
-func (s *Service) denState(ctx context.Context) (moduleSettings map[string]map[string]json.Number, smtp *mail.Config, err error) {
-	var rawSettings, rawSMTP []byte
-	err = s.pool.QueryRow(ctx, `SELECT bundle->'module_settings', bundle->'smtp' FROM den_link WHERE id = 1 AND bundle IS NOT NULL`).
-		Scan(&rawSettings, &rawSMTP)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, nil
+// denSettingKey is the contract name of a Tasks setting: under the module
+// slug (tasks.trash_days). denValues also accepts the older name (the key
+// Tasks stores itself, such as retention.trash_days) so a bundle written
+// before the names settled still applies.
+func denSettingKey(key string) string {
+	switch key {
+	case "retention.trash_days":
+		return "tasks.trash_days"
+	case "retention.notification_days":
+		return "tasks.notification_days"
+	case "retention.audit_days":
+		return "tasks.audit_days"
+	case "retention.automation_run_days":
+		return "tasks.automation_run_days"
+	case "reminders.due_soon_days":
+		return "tasks.due_soon_days"
+	default:
+		return "tasks." + key
 	}
-	if err != nil {
-		return nil, nil, err
+}
+
+// denValues reads Den's module settings from the paired denlink client
+// (the bundle it already stored). values is keyed by Tasks' own setting
+// names. smtp is set only when Den sets smtp.host and a sender. passwordSet
+// means the password is not in the bundle: the caller fetches it when mail
+// is actually sent. All three are empty when the module is standalone.
+func (s *Service) denValues() (values map[string]int, smtp *mail.Config, passwordSet bool) {
+	if s == nil || s.den == nil {
+		return nil, nil, false
 	}
-	if len(rawSettings) > 0 && string(rawSettings) != "null" {
-		dec := json.NewDecoder(strings.NewReader(string(rawSettings)))
-		dec.UseNumber()
-		var raw map[string]map[string]any
-		if dec.Decode(&raw) == nil {
-			moduleSettings = map[string]map[string]json.Number{}
-			for section, fields := range raw {
-				for field, v := range fields {
-					if n, ok := v.(json.Number); ok {
-						if moduleSettings[section] == nil {
-							moduleSettings[section] = map[string]json.Number{}
-						}
-						moduleSettings[section][field] = n
-					}
-				}
-			}
+	ms := s.den.ModuleSettings()
+	if ms == nil {
+		return nil, nil, false
+	}
+	values = map[string]int{}
+	for _, d := range SettingDefs {
+		n, ok := ms.Days(denSettingKey(d.Key))
+		if !ok {
+			n, ok = ms.Days(d.Key)
 		}
-	}
-	if len(rawSMTP) > 0 && string(rawSMTP) != "null" {
-		var c mail.Config
-		if json.Unmarshal(rawSMTP, &c) == nil && c.Enabled() {
-			smtp = &c
+		if !ok || n < d.Min || n > d.Max {
+			continue
 		}
+		values[d.Key] = n
 	}
-	return moduleSettings, smtp, nil
+	sm, ok := ms.SMTP()
+	if !ok {
+		return values, nil, false
+	}
+	cfg := (mail.Config{
+		Host: sm.Host, Port: sm.Port, Username: sm.Username,
+		From: sm.From, FromName: sm.FromName, Security: sm.Security,
+	}).Normalized()
+	if !cfg.Enabled() {
+		return values, nil, false
+	}
+	return values, &cfg, sm.PasswordSet
 }
 
 // effectiveSettings resolves every setting and where it came from.
@@ -138,20 +156,9 @@ func (s *Service) effectiveSettings(ctx context.Context) (map[string]int, map[st
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	den, _, err := s.denState(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	for section, fields := range den {
-		for field, n := range fields {
-			key := section + "." + field
-			d, ok := settingDef(key)
-			v, err := n.Int64()
-			if !ok || err != nil || int(v) < d.Min || int(v) > d.Max {
-				continue
-			}
-			values[key], sources[key] = int(v), "den"
-		}
+	den, _, _ := s.denValues()
+	for key, v := range den {
+		values[key], sources[key] = v, "den"
 	}
 	return values, sources, nil
 }
@@ -170,14 +177,25 @@ func (s *Service) Setting(ctx context.Context, key string) (int, error) {
 func (s *Service) SetEnvSMTP(c mail.Config) { s.envSMTP = c.Normalized() }
 
 // MailConfig is the SMTP server email goes through: Den's when it sends
-// one, else Tasks' own. ok is false when neither is configured.
+// one, else Tasks' own. ok is false when neither is configured. When Den
+// holds the password (smtp.password_set) it is fetched now and kept only
+// in the returned config.
 func (s *Service) MailConfig(ctx context.Context) (cfg mail.Config, source string, ok bool, err error) {
-	_, den, err := s.denState(ctx)
-	if err != nil {
-		return mail.Config{}, "", false, err
-	}
+	return s.mailConfig(ctx, true)
+}
+
+func (s *Service) mailConfig(ctx context.Context, withPassword bool) (cfg mail.Config, source string, ok bool, err error) {
+	_, den, passwordSet := s.denValues()
 	if den != nil {
-		return den.Normalized(), "den", true, nil
+		cfg = *den
+		if passwordSet && withPassword {
+			pw, err := s.den.SMTPPassword(ctx)
+			if err != nil {
+				return mail.Config{}, "", false, err
+			}
+			cfg.Password = pw
+		}
+		return cfg, "den", true, nil
 	}
 	if s.envSMTP.Enabled() {
 		return s.envSMTP, "tasks", true, nil
@@ -199,7 +217,7 @@ func (s *Service) Settings(ctx context.Context) (SettingsView, error) {
 		}
 		v.Settings[section][field] = val
 	}
-	cfg, source, ok, err := s.MailConfig(ctx)
+	cfg, source, ok, err := s.mailConfig(ctx, false)
 	if err != nil {
 		return SettingsView{}, err
 	}

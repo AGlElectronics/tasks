@@ -46,6 +46,13 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   itself: *Settings → Den connection* and a banner for admins say "pair
   again manually", and pairing with a new pairing URL clears the state.
   The migration `20261111000009_den_link_revoked.sql` adds the column.
+- `GET /api/portal/todos`: Den's backend asks for the open tasks assigned
+  to one person, with the pairing credential (`Authorization: Bearer`) and
+  the person's issuer and subject (`X-Den-User-Issuer` and
+  `X-Den-User-Subject`, or `?issuer=&subject=`). Done, trashed and archived
+  tasks are left out. The link uses `TASKS_PUBLIC_URL`. The Helm chart
+  admits `den-backend` so the call can reach the pod. See the
+  [API](https://aglelectronics.github.io/con-services/modules/tasks/api/#portal-to-dos).
 - `GET /api/role-catalog` follows the role catalog contract: each role has
   `key`, `label`, `description`, `group` and `group_display`,
   `assignable`, `default`, `scope`, `privileged`, `dynamic` and
@@ -203,6 +210,22 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 - CI on every pull request (tests, lint, Trivy scans) and signed images with
   an SBOM published to GHCR on version tags (linux/amd64; linux/arm64
   optional).
+
+### Changed
+
+- **BREAKING:** Den's module settings are read with the shared client
+  (`ModuleSettings()`), not with SQL on the stored bundle. Send Tasks'
+  five settings as `tasks.trash_days`, `tasks.notification_days`,
+  `tasks.audit_days`, `tasks.automation_run_days` and `tasks.due_soon_days`.
+  The older names `retention.trash_days` and `reminders.due_soon_days` still
+  work; when both are present, `tasks.*` wins. Mail is `smtp` inside those
+  module settings (`smtp.host` and the rest). The password is not in the
+  bundle: set it in Den (`password_set`) and Tasks fetches it when it sends.
+  A bundle that put `smtp` next to `module_settings` no longer supplies mail.
+- The client address uses the shared trusted-proxy code. `TRUSTED_PROXY_CIDRS`
+  keeps its name and default. CORS exposes `X-Request-ID` and `X-Next-Cursor`.
+  `bad_request`, `request_too_large` and `rate_limited` are the shared error
+  codes.
 
 ### Security
 

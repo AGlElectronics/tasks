@@ -9,6 +9,7 @@
 //	GET /livez, /readyz, /api/health — probes and status (unauthenticated)
 //	GET /api/den/state, /api/v1/brand — public
 //	GET /api/role-catalog — HR (HR_SERVICE_TOKEN) or any signed-in person
+//	GET /api/portal/todos — Den's backend, with the pairing credential
 //	POST /api/internal/departments — HR department hook (TASKS_SERVICE_TOKEN)
 //	/api/v1/me, /me/preferences, /me/notifications — the signed-in person
 //	/api/v1/spaces…, /lists…, /tasks… — spaces, statuses, lists, grants,
@@ -31,7 +32,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/hlog"
@@ -39,7 +39,6 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/auth"
 	"github.com/AGlElectronics/tasks/backend/internal/authbase"
 	"github.com/AGlElectronics/tasks/backend/internal/brand"
-	"github.com/AGlElectronics/tasks/backend/internal/clientip"
 	"github.com/AGlElectronics/tasks/backend/internal/config"
 	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 	"github.com/AGlElectronics/tasks/backend/internal/domain"
@@ -76,9 +75,11 @@ func NewRouter(deps Deps, version string) http.Handler {
 	r := chi.NewRouter()
 	authCfg := deps.Config.Auth()
 
+	// RemoteAddr becomes the real client before logs and the rate limiter.
+	// The zero value (tests that build a Config by hand) trusts no proxy.
+	r.Use(authCfg.TrustedProxies.Middleware)
 	r.Use(authCfg.StripDevHeaders)
 	r.Use(chimiddleware.RequestID)
-	r.Use(clientip.Middleware(deps.Config.TrustedProxyCIDRs))
 	r.Use(chimiddleware.Recoverer)
 	timeout := chimiddleware.Timeout(60 * time.Second)
 	r.Use(func(next http.Handler) http.Handler {
@@ -114,16 +115,12 @@ func NewRouter(deps Deps, version string) http.Handler {
 	}))
 	r.Use(hlog.RequestIDHandler("request_id", "X-Request-ID"))
 
-	// go-chi/cors because authbase.CORS cannot expose response headers
-	// (X-Next-Cursor); the allowed request headers come from authbase, so
-	// X-Dev-User and X-Dev-Groups are only allowed in dev mode.
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   deps.Config.CORSAllowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   authCfg.AllowedHeaders(),
-		ExposedHeaders:   []string{"X-Request-ID", "X-Next-Cursor"},
-		AllowCredentials: true,
-		MaxAge:           300,
+	// X-Request-ID is exposed by default; the web app also reads X-Next-Cursor.
+	// X-Dev-User and X-Dev-Groups are allowed only in dev mode.
+	r.Use(authCfg.CORS(authbase.CORSOptions{
+		AllowedOrigins: deps.Config.CORSAllowedOrigins,
+		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
+		ExposeHeaders:  []string{"X-Request-ID", "X-Next-Cursor"},
 	}))
 
 	health := newHealthHandler(deps.Pool, version)
@@ -141,6 +138,7 @@ func NewRouter(deps Deps, version string) http.Handler {
 	svc.SetEnvSMTP(deps.Config.SMTP())
 	svc.SetPublicURL(deps.Config.PublicBaseURL)
 	svc.SetGroupMatch(deps.Config.Groups)
+	svc.SetDen(den)
 	send := deps.SendMail
 	if send == nil {
 		send = mail.Send
@@ -170,6 +168,7 @@ func NewRouter(deps Deps, version string) http.Handler {
 		api.Use(den.RequirePaired)
 		api.Get("/health", health.get)
 		api.Get("/role-catalog", roleCatalogHandler(deps.Access, deps.Config.HRServiceToken, authMW))
+		api.Get("/portal/todos", portalTodos(den, svc))
 		api.Get("/den/state", den.StateHandler)
 		// Service-to-service: HR ensures one space per department
 		// (TASK-25). Guarded by TASKS_SERVICE_TOKEN, not user auth.

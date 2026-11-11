@@ -79,7 +79,7 @@ func (h *taskHandler) stream(w http.ResponseWriter, r *http.Request) {
 	if !h.streams.acquire(u.ID) {
 		w.Header().Set("Retry-After", "30")
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": map[string]any{
-			"code":    "rate_limited",
+			"code":    httperror.CodeRateLimited,
 			"message": fmt.Sprintf("at most %d live-update connections per person; close other tabs", streamPerUser),
 		}})
 		return

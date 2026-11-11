@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 	"github.com/AGlElectronics/tasks/backend/internal/domain"
 	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
@@ -30,14 +31,22 @@ type Service struct {
 	publicURL string
 	// groups is the shared group matching rule for group grants.
 	groups groupmatch.Config
+	// den is the pairing. Nil, or a client with no bundle, means standalone:
+	// module settings then come only from Tasks.
+	den *denlink.Client
 }
 
 // SetGroupMatch sets the group matching rule (OIDC_GROUP_MATCH,
 // OIDC_GROUP_PREFIX) used for group grants.
 func (s *Service) SetGroupMatch(c groupmatch.Config) { s.groups = c }
 
-// SetPublicURL sets the web app address used for links in emails.
+// SetPublicURL sets the web app address used for links in emails and in
+// the to-dos Den collects.
 func (s *Service) SetPublicURL(u string) { s.publicURL = strings.TrimRight(u, "/") }
+
+// SetDen attaches the Den pairing so module settings and the pairing
+// credential come from the shared client instead of the bundle column.
+func (s *Service) SetDen(d *denlink.Client) { s.den = d }
 
 // NewService constructs the task service.
 func NewService(pool *pgxpool.Pool) *Service {

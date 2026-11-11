@@ -119,6 +119,7 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 	jobs.SetEnvSMTP(cfg.SMTP())
 	jobs.SetPublicURL(cfg.PublicBaseURL)
 	jobs.SetGroupMatch(cfg.Groups)
+	jobs.SetDen(den)
 	if cfg.SMTPHost != "" {
 		logger.Info().Str("host", cfg.SMTPHost).Msg("own SMTP configured (Den's SMTP wins when paired and sent)")
 	}

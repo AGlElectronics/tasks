@@ -7,7 +7,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/rs/zerolog"
+
 	"github.com/AGlElectronics/tasks/backend/internal/config"
+	"github.com/AGlElectronics/tasks/backend/internal/denlink"
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
 )
@@ -87,10 +90,16 @@ func TestModuleSettings(t *testing.T) {
 	// its values cannot be changed here.
 	if _, err := h.pool.Exec(context.Background(), `
 		INSERT INTO den_link (den_base_url, credential, bundle) VALUES ('http://den', 'x', $1)`,
-		`{"brand":{},"settings":{"data":{}},"module_settings":{"retention":{"trash_days":3,"audit_days":99999}},
-		  "smtp":{"host":"mail.den.example","port":465,"from":"den@example.org","security":"tls","password":"secret"}}`); err != nil {
+		`{"brand":{},"settings":{"data":{}},"module_settings":{"data":{
+		    "retention":{"trash_days":3,"audit_days":99999},
+		    "smtp":{"host":"mail.den.example","port":465,"from":"den@example.org","security":"tls"}}}}`); err != nil {
 		t.Fatal(err)
 	}
+	den := denlink.New(h.pool, denlink.Config{Slug: "tasks", AppEnv: "development"}, zerolog.Nop())
+	if err := den.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.rebuild(func(d *Deps) { d.Den = den })
 	v = h.must(admin, "GET", "/api/v1/settings", nil, 200)
 	src := v["sources"].(map[string]any)
 	if v["settings"].(map[string]any)["retention"].(map[string]any)["trash_days"] != float64(3) || src["retention.trash_days"] != "den" {
