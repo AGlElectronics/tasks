@@ -41,18 +41,25 @@ COPY infra/${NGINX_CONF} /etc/nginx/conf.d/default.conf
 COPY infra/frontend-config/default.json /etc/conservices/config.json
 # Browser security headers (con-services shared/nginx). The image's
 # entrypoint fills in the origins from the environment at start-up and
-# writes /etc/nginx/snippets/security-headers.conf. The copy made here,
-# without outside origins, is used when /etc/nginx/snippets is read-only.
+# writes both snippets under /etc/nginx/snippets. The copies made here,
+# without outside origins, are used when /etc/nginx/snippets is read-only.
+# security-headers-frame-self.conf is only for /silent-callback.html.
 COPY infra/security-headers.conf.template /etc/nginx/templates/security-headers.conf.template
+COPY infra/security-headers-frame-self.conf.template /etc/nginx/templates/security-headers-frame-self.conf.template
+# The class includes digits: S3_ORIGIN would otherwise stay as ${S3_ORIGIN}
+# and nginx would refuse to start on this read-only fallback.
 RUN mkdir -p /etc/nginx/snippets \
- && sed -E 's/ *\$\{[A-Z_]+\}//g' /etc/nginx/templates/security-headers.conf.template \
-      > /etc/nginx/snippets/security-headers.conf \
+ && for t in security-headers security-headers-frame-self; do \
+      sed -E 's/ *\$\{[A-Z0-9_]+\}//g' /etc/nginx/templates/$t.conf.template \
+        > /etc/nginx/snippets/$t.conf; \
+    done \
  && chown -R 101:101 /etc/nginx/snippets
 USER 101
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/snippets \
-    NGINX_ENVSUBST_FILTER='^(KEYCLOAK_ORIGIN|DEN_ORIGIN|S3_ORIGIN|EXTRA_CONNECT_SRC)$' \
+    NGINX_ENVSUBST_FILTER='^(KEYCLOAK_ORIGIN|DEN_ORIGIN|S3_ORIGIN|EXTRA_CONNECT_SRC|EXTRA_FRAME_SRC)$' \
     KEYCLOAK_ORIGIN="" \
     DEN_ORIGIN="" \
     S3_ORIGIN="" \
-    EXTRA_CONNECT_SRC=""
+    EXTRA_CONNECT_SRC="" \
+    EXTRA_FRAME_SRC=""
 EXPOSE 8080

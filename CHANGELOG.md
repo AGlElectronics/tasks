@@ -49,9 +49,9 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 - `GET /api/portal/todos`: Den's backend asks for the open tasks assigned
   to one person, with the pairing credential (`Authorization: Bearer`) and
   the person's issuer and subject (`X-Den-User-Issuer` and
-  `X-Den-User-Subject`, or `?issuer=&subject=`). Done, trashed and archived
-  tasks are left out. The link uses `TASKS_PUBLIC_URL`. The Helm chart
-  admits `den-backend` so the call can reach the pod. See the
+  `X-Den-User-Subject`). Done, trashed and archived tasks are left out. The
+  link uses `TASKS_PUBLIC_URL`. The Helm chart admits `den-backend` so the
+  call can reach the pod. See the
   [API](https://aglelectronics.github.io/con-services/modules/tasks/api/#portal-to-dos).
 - `GET /api/role-catalog` follows the role catalog contract: each role has
   `key`, `label`, `description`, `group` and `group_display`,
@@ -213,6 +213,14 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 
 ### Changed
 
+- **BREAKING:** `GET /api/portal/todos` names the person only with the
+  headers `X-Den-User-Issuer` and `X-Den-User-Subject`. The
+  `?issuer=&subject=` query fallback is gone: Den never sends it, and a
+  call that puts the person only in the query string answers `400
+  bad_request` (`issuer and subject are required`). Send the two headers.
+- Den's SMTP password is fetched with the shared client. A revoked
+  credential is not used for that call. The password stays in memory for
+  at most a minute and is never written to the database.
 - **BREAKING:** Den's module settings are read with the shared client
   (`ModuleSettings()`), not with SQL on the stored bundle. Send Tasks'
   five settings as `tasks.trash_days`, `tasks.notification_days`,
@@ -226,6 +234,13 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   keeps its name and default. CORS exposes `X-Request-ID` and `X-Next-Cursor`.
   `bad_request`, `request_too_large` and `rate_limited` are the shared error
   codes.
+
+### Fixed
+
+- The web app image's fallback security-header snippets (used when
+  `/etc/nginx/snippets` cannot be written) now strip `${S3_ORIGIN}` too.
+  That name contains a digit, so the old pattern left it in the file and
+  nginx refused to start.
 
 ### Security
 
@@ -280,14 +295,19 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 - The web app sends the shared Con Services browser security headers
   (`infra/security-headers.conf.template`): scripts, styles and images only
   from the app itself, connections and frames only to the app and the
-  origins in `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN` and
-  `EXTRA_CONNECT_SRC` (set on the web app container, empty by default),
-  no framing, forms only to the app or Keycloak, and a Permissions-Policy
-  that turns off camera, microphone and location. Set `KEYCLOAK_ORIGIN` to
+  origins in `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN`,
+  `EXTRA_CONNECT_SRC` and `EXTRA_FRAME_SRC` (set on the web app container,
+  empty by default), no framing of the app, forms only to the app or
+  Keycloak, and a Permissions-Policy that turns off camera, microphone and
+  location. `/silent-callback.html` is the exception: it may be framed by
+  the app itself (`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`)
+  so silent sign-in can run in a hidden iframe. The Helm chart's nginx
+  config includes that same location. Set `KEYCLOAK_ORIGIN` to
   the sign-in server's origin, or OIDC sign-in and silent renewal are
-  blocked. The inline scripts of `index.html` and `silent-callback.html`
-  moved into `theme-init.js` and `silent-callback.js`. The headers are
-  not added to `/api/`, where the backend sets its own.
+  blocked. Tasks leaves `EXTRA_FRAME_SRC` empty. The inline scripts of
+  `index.html` and `silent-callback.html` moved into `theme-init.js` and
+  `silent-callback.js`. The headers are not added to `/api/`, where the
+  backend sets its own.
 - No image runs as root. The web app runs on
   `nginxinc/nginx-unprivileged:1.30.6-alpine` as UID 101 and listens on
   port 8080. All images are built with Go 1.27.3 and pass the CI image

@@ -87,8 +87,10 @@ func TestPortalTodos(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("missing person: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := get("Bearer "+cred, false); rec.Code != http.StatusOK {
-		t.Fatalf("query form: %d %s", rec.Code, rec.Body.String())
+	// Den never sends the person in the query string. RequireDen ignores
+	// ?issuer=&subject=, so that form is a missing person.
+	if rec := get("Bearer "+cred, false); rec.Code != http.StatusBadRequest {
+		t.Fatalf("query-only form: %d %s", rec.Code, rec.Body.String())
 	}
 
 	rec = get("Bearer "+cred, true)
