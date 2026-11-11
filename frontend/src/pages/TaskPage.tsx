@@ -95,6 +95,10 @@ function describeBase(e: TaskEvent): string {
       return 'moved it to the trash';
     case 'restored':
       return 'restored it from the trash';
+    case 'completed':
+      return 'completed it (its status became a done status)';
+    case 'reopened':
+      return 'reopened it (its status is no longer a done status)';
     default:
       return e.kind;
   }

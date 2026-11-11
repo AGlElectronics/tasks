@@ -711,7 +711,11 @@ func (h *taskHandler) deleteComment(r *http.Request, u *auth.User) (int, any, er
 // spaces (TASK-33). Supports ?q= search and ?limit=.
 func (h *taskHandler) people(r *http.Request, u *auth.User) (int, any, error) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := h.svc.ListPeople(r.Context(), r.URL.Query().Get("q"), limit, u.HasAny(domain.PermSpaceManage))
+	orgID, err := h.svc.DefaultOrganization(r.Context())
+	if err != nil {
+		return 0, nil, err
+	}
+	out, err := h.svc.ListPeople(r.Context(), r.URL.Query().Get("q"), limit, u.HasInOrg(domain.PermSpaceManage, orgID))
 	if err != nil {
 		return 0, nil, err
 	}

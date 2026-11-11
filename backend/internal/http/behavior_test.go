@@ -139,6 +139,13 @@ func TestReplaceStatuses(t *testing.T) {
 	if got["completed_at"] != nil {
 		t.Fatal("completed_at should clear when the category stops being done")
 	}
+	kinds := map[string]bool{}
+	for _, raw := range got["events"].([]any) {
+		kinds[str(raw.(map[string]any), "kind")] = true
+	}
+	if !kinds["completed"] || !kinds["reopened"] {
+		t.Fatalf("category flips must be logged as completed and reopened, got %v", kinds)
+	}
 
 	// Guardrails: no statuses at all, and no done status, are both invalid.
 	h.must(alice, "PUT", "/api/v1/spaces/"+spaceID+"/statuses", map[string]any{"statuses": []any{}}, 422)

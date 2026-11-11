@@ -24,8 +24,9 @@ const (
 // Priorities, most urgent first.
 var Priorities = []string{"urgent", "high", "normal", "low"}
 
-// Permission identifiers. Working on tasks needs no permission: every
-// signed-in staff member may (MVP; per-space sharing comes later).
+// Permission identifiers. Working on tasks needs no permission, only access
+// to the space or list: its everyone level, a grant to the person or one of
+// their groups, or being assigned to or watching the task.
 const (
 	// PermSpaceManage: edit and delete every space, its lists and statuses,
 	// regardless of per-space grants.

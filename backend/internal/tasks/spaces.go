@@ -516,11 +516,42 @@ func (s *Service) ReplaceStatuses(ctx context.Context, actor, spaceID uuid.UUID,
 			return nil, err
 		}
 	}
-	// Category changes can complete or reopen tasks.
-	if _, err := tx.Exec(ctx, `
-		UPDATE tasks t SET completed_at = CASE WHEN st.category = 'done' THEN COALESCE(t.completed_at, now()) ELSE NULL END
-		  FROM statuses st WHERE st.id = t.status_id AND t.space_id = $1`, spaceID); err != nil {
+	// Category changes can complete or reopen tasks; each one that flips is
+	// logged like any other completion.
+	rows, err := tx.Query(ctx, `
+		UPDATE tasks t SET completed_at = CASE WHEN st.category = 'done' THEN now() ELSE NULL END
+		  FROM statuses st
+		 WHERE st.id = t.status_id AND t.space_id = $1
+		   AND (st.category = 'done') <> (t.completed_at IS NOT NULL)
+		RETURNING t.id, st.category = 'done'`, spaceID)
+	if err != nil {
 		return nil, err
+	}
+	type flip struct {
+		id   uuid.UUID
+		done bool
+	}
+	var flips []flip
+	for rows.Next() {
+		var f flip
+		if err := rows.Scan(&f.id, &f.done); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		flips = append(flips, f)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, f := range flips {
+		kind := "reopened"
+		if f.done {
+			kind = "completed"
+		}
+		if err := addEvent(ctx, tx, f.id, actor, kind, map[string]any{"cause": "status category changed"}); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
