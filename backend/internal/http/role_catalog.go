@@ -80,7 +80,7 @@ func buildRoleCatalog(access *auth.AccessConfig) roleCatalog {
 				Group:        g.Stored,
 				GroupDisplay: g.Display,
 				Assignable:   true,
-				Scope:        "organization:" + b.Organization,
+				Scope:        "organization",
 				Privileged:   privileged,
 				Permissions:  perms,
 			})

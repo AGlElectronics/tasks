@@ -63,7 +63,7 @@ func TestRoleCatalogContract(t *testing.T) {
 		byGroup[r.Group] = r
 	}
 	admin, creator, path2 := byGroup["tasks-admin"], byGroup["tasks-creator"], byGroup["tasks/admins"]
-	if !admin.Privileged || admin.Dynamic || !admin.Assignable || admin.Key != "organization_admin" {
+	if !admin.Privileged || admin.Dynamic || !admin.Assignable || admin.Key != "organization_admin" || admin.Scope != "organization" {
 		t.Errorf("organization_admin entry: %+v", admin)
 	}
 	if creator.Privileged || creator.Key != "space_creator" {
