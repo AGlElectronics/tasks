@@ -30,7 +30,9 @@ type Config struct {
 }
 
 // Enabled reports whether there is a server and a sender.
-func (c Config) Enabled() bool { return strings.TrimSpace(c.Host) != "" && strings.TrimSpace(c.From) != "" }
+func (c Config) Enabled() bool {
+	return strings.TrimSpace(c.Host) != "" && strings.TrimSpace(c.From) != ""
+}
 
 // Normalized fills defaults: port 587 (465 for tls), security starttls.
 func (c Config) Normalized() Config {

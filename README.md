@@ -37,14 +37,27 @@ that:
   restore/purge, list archiving, an audit log for destructive actions,
   and `KEY-N` aliases so references keep resolving after a space key
   rename or a cross-space move.
+- **Planning:** custom fields per space (text, number, date, select,
+  checkbox, URL), dependencies ("waits for"), recurring tasks, time
+  tracking with estimates, and calendar, timeline and workload views (per
+  list, plus a calendar across every space).
+- **Live updates:** boards and task pages refresh within a second over
+  Server-Sent Events fed by PostgreSQL `LISTEN/NOTIFY`; polling is the
+  fallback.
+- **Email:** each person chooses which notifications also come by email;
+  due-soon reminders; SMTP from Den or `SMTP_*`.
+- **Admin:** audit log page and API, retention and reminder settings
+  (from Den's module settings when paired), import from CSV, ClickUp and
+  Vikunja.
 - **Scale:** cursor pagination (`X-Next-Cursor`), per-user rate limiting,
-  position rebalancing when drag-and-drop exhausts float gaps, 15-second
-  polling so boards track other people's changes.
+  position rebalancing when drag-and-drop exhausts float gaps.
 - **Departments:** HR calls `/api/internal/departments` (guarded by
-  `TASKS_SERVICE_TOKEN`, off when empty) whenever a department is created
-  or renamed; each department gets exactly one space, closed by default,
-  with the department's Keycloak group granted edit.
+  `TASKS_SERVICE_TOKEN`, off when empty) whenever a department is created,
+  saved or archived; each department gets exactly one space, closed by
+  default, with the department's Keycloak group granted edit.
   `scripts/backfill-department-spaces.ps1` seeds existing departments.
+
+Decisions with lasting consequences are in [docs/adr/](docs/adr/).
 
 - **Backend:** Go 1.27, chi, pgx (hand-written queries), zerolog.
 - **Frontend:** React 19 + Rsbuild + TanStack Router/Query + Tailwind.
@@ -89,8 +102,9 @@ statuses, automations, trash, delete).
 - Automations: space managers run the space's rules; a manager of one
   list can manage rules scoped to that list.
 
-Group grants match the `groups` claim on the token, so removing someone
-from a Keycloak group revokes that access on their next request.
+Group grants match the `groups` claim on the token (case-insensitive, one
+leading `/` ignored, whole path), so removing someone from a Keycloak
+group revokes that access on their next request.
 
 ## Run it
 
@@ -114,19 +128,21 @@ go test ./...
 
 The tests drop and recreate the `public` schema of that database, so
 point them at a throwaway one. They cover the authorization matrix
-(roles, grants, private lists, assignment and watching, the trash),
-automations (triggers, conditions, actions, loop guard, due sweep), patch
-semantics and version conflicts, status replacement and `completed_at`,
-and `KEY-N` resolution across renames and moves. Frontend unit tests run
+(roles, grants, group matching, private lists, assignment and watching,
+the trash), automations, patch semantics and version conflicts, status
+replacement, `KEY-N` resolution, the HR department hook, the audit log,
+settings, retention, reminders and email, live updates, custom fields,
+dependencies, recurrence, time tracking, the calendar and import. Frontend unit tests run
 with `npm test` in `tasks/frontend`. Against the running stack,
 `scripts/smoke-tasks.ps1` walks the whole feature surface in 15 steps
 (`-Base http://localhost:8161` to point it at the dev copy).
 
 ## Operations notes
 
-- **Run one backend replica.** The per-user rate limiter is in-process,
-  and the due-date automation sweep runs on a one-minute ticker (the run
-  history dedups it, but two replicas would race).
+- **Run one backend replica** ([ADR 0001](docs/adr/0001-single-backend-replica.md)):
+  the rate limiter and the background jobs (due automations, reminders,
+  email, retention) run in the process.
+- Proxies must not buffer or time out `/api/v1/stream` (live updates).
 - Back up Postgres, and the `tasks-data-dev` bucket when attachments are
   in use.
 - `TASKS_SERVICE_TOKEN` guards `/api/internal/departments` (HR's hook);

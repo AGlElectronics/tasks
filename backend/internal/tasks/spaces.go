@@ -80,11 +80,11 @@ type Space struct {
 	Archived bool `json:"archived"`
 	// DepartmentID is the HR department this space belongs to (set by the
 	// department hook); nil for spaces made by hand.
-	DepartmentID  *uuid.UUID `json:"department_id"`
-	Lists         []List    `json:"lists"`
-	Folders       []Folder  `json:"folders"`
-	Statuses      []Status  `json:"statuses"`
-	OrgID         uuid.UUID `json:"-"`
+	DepartmentID *uuid.UUID `json:"department_id"`
+	Lists        []List     `json:"lists"`
+	Folders      []Folder   `json:"folders"`
+	Statuses     []Status   `json:"statuses"`
+	OrgID        uuid.UUID  `json:"-"`
 }
 
 var defaultStatuses = []Status{

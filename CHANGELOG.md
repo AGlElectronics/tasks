@@ -71,6 +71,13 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   and the platform's `conservices-internal-ca` issuer; without them set
   `internalTLS.enabled: false`. See
   [Set up Tasks](https://aglelectronics.github.io/con-services/modules/tasks/setup/).
+- Helm chart: `config` has `TASKS_PUBLIC_URL` and the `SMTP_*` settings
+  (username and password go in `existingSecret`),
+  `networkPolicy.smtp.cidrs` opens egress to the mail server, and
+  `frontend.websocketPathRegex` defaults to `^/api/v1/stream$` so the
+  live-update stream gets no proxy buffering and no Gateway request
+  timeout. One backend replica stays mandatory; why and what scaling out
+  needs is in `docs/adr/0001-single-backend-replica.md`.
 - Development: `infra/docker-compose.yml` mounts
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.

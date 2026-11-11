@@ -4,13 +4,13 @@ import "testing"
 
 func TestGroupKey(t *testing.T) {
 	cases := map[string]string{
-		"dept-security":          "dept-security",
-		"  /Dept-Security ":      "dept-security",
-		"/departments/Security":  "departments/security",
-		"departments/security/":  "departments/security/",
-		"//double":               "/double",
-		"":                       "",
-		"   ":                    "",
+		"dept-security":         "dept-security",
+		"  /Dept-Security ":     "dept-security",
+		"/departments/Security": "departments/security",
+		"departments/security/": "departments/security/",
+		"//double":              "/double",
+		"":                      "",
+		"   ":                   "",
 	}
 	for in, want := range cases {
 		if got := GroupKey(in); got != want {

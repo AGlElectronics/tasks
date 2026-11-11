@@ -3,24 +3,20 @@
 // modules: one Deps struct consumed by one NewRouter, with per-resource
 // handler types owning their own routing closure.
 //
-// API shape:
+// API shape (the full reference is docs/modules/tasks/api.md in
+// con-services; the routes below are the source of truth):
 //
-//	GET /livez             — process liveness (unauthenticated)
-//	GET /readyz            — service readiness (unauthenticated)
-//	GET /api/health        — richer status for humans
-//	GET /api/den/state     — Den mode and pairing (unauthenticated; also /api/v1/den/state)
-//	GET /api/role-catalog  — public role catalog for HR's access picker
-//	POST /api/internal/departments — HR department→space sync (TASKS_SERVICE_TOKEN)
-//	GET /api/v1/brand      — active brand package (unauthenticated)
-//	GET /api/v1/me         — authenticated principal + permissions
-//	GET|POST /api/v1/spaces, GET|PATCH|DELETE /api/v1/spaces/{space}
-//	PUT /api/v1/spaces/{space}/statuses, POST /api/v1/spaces/{space}/lists
-//	GET|PATCH|DELETE /api/v1/lists/{list}, GET /api/v1/lists/{list}/tasks
-//	GET /api/v1/my-work, POST /api/v1/tasks
-//	GET|PATCH|DELETE /api/v1/tasks/{task} — {task} is a uuid or KEY-N
-//	POST /api/v1/tasks/{task}/comments, DELETE /api/v1/comments/{comment}
-//	GET /api/v1/users     — people picker
-//	/api/v1/den…           — Den pairing admin (settings.manage)
+//	GET /livez, /readyz, /api/health — probes and status (unauthenticated)
+//	GET /api/den/state, /api/role-catalog, /api/v1/brand — public
+//	POST /api/internal/departments — HR department hook (TASKS_SERVICE_TOKEN)
+//	/api/v1/me, /me/preferences, /me/notifications — the signed-in person
+//	/api/v1/spaces…, /lists…, /tasks… — spaces, statuses, lists, grants,
+//	    tasks ({task} is a uuid or KEY-N), comments, events, checklists,
+//	    watchers, attachments, tags, folders, custom fields, dependencies,
+//	    time, automations, trash, import
+//	GET /api/v1/my-work, /inbox…, /search, /calendar, /favorites, /users
+//	GET /api/v1/stream — live updates (Server-Sent Events)
+//	/api/v1/audit, /settings… , /den… — admin (settings.manage)
 //
 // Everything under /api/v1 (except /brand) requires authentication; the
 // auth middleware is applied inside a chi.Group so the shape is explicit.

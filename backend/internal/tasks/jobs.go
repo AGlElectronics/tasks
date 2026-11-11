@@ -290,12 +290,12 @@ const (
 )
 
 type outgoing struct {
-	id                       uuid.UUID
-	userID                   uuid.UUID
-	email, name              string
-	key, title, actor, msg   string
-	kind                     string
-	createdAt                time.Time
+	id                     uuid.UUID
+	userID                 uuid.UUID
+	email, name            string
+	key, title, actor, msg string
+	kind                   string
+	createdAt              time.Time
 }
 
 // RunEmailOutbox emails pending notifications older than delay: one email

@@ -337,9 +337,9 @@ type TaskDetail struct {
 	// BlockedBy: tasks this one waits for; Blocking: tasks waiting for it.
 	// The handler removes the ones the caller cannot see and counts them
 	// in HiddenDependencies.
-	BlockedBy          []DepRef `json:"blocked_by"`
-	Blocking           []DepRef `json:"blocking"`
-	HiddenDependencies int      `json:"hidden_dependencies"`
+	BlockedBy          []DepRef    `json:"blocked_by"`
+	Blocking           []DepRef    `json:"blocking"`
+	HiddenDependencies int         `json:"hidden_dependencies"`
 	TimeEntries        []TimeEntry `json:"time_entries"`
 }
 
@@ -739,7 +739,7 @@ type TaskPatch struct {
 	Recurrence NullableRecurrence `json:"recurrence"`
 	// EstimateMinutes: planned effort; null clears it.
 	EstimateMinutes NullableInt `json:"estimate_minutes"`
-	Version     *int         `json:"version"`
+	Version         *int        `json:"version"`
 }
 
 func addEvent(ctx context.Context, tx pgx.Tx, taskID, actor uuid.UUID, kind string, data map[string]any) error {

@@ -69,11 +69,11 @@ type ImportResult struct {
 
 // rawRow is a parsed source row before it is matched to the space.
 type rawRow struct {
-	line                         int
-	title, description, status   string
-	priority, start, due         string
-	done                         bool
-	assignees, tags              []string
+	line                       int
+	title, description, status string
+	priority, start, due       string
+	done                       bool
+	assignees, tags            []string
 }
 
 var csvColumns = map[string][]string{

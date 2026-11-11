@@ -7,9 +7,13 @@ tracking work without ClickUp's long tail. Same shape as every other module
 (own database, own bucket, OIDC against the shared Keycloak, role catalog,
 Den pairing, Den's nightly backups).
 
-Status: **built** (November 2026). The MVP below is live; the sections
-after this one are the original plan, kept for the reasoning. Where the
-built thing deviates from the plan, the next section is the truth.
+Status: **built** (November 2026), including every "Later" item from the
+backlog (custom fields, calendar, timeline and workload, live updates,
+email, dependencies, recurring tasks, time tracking, automations, import).
+The sections after "Built" are the original plan, kept for the reasoning;
+lines marked *(superseded)* no longer describe the module. Where the built
+thing deviates from the plan, the next section and the ADRs in
+[`docs/adr/`](adr/) are the truth.
 
 ## Built, and how it deviates from the plan
 
@@ -31,12 +35,15 @@ Deviations from the plan, deliberate:
 | BlockNote JSON descriptions and comments | Plain text | The wiki is for documents; task descriptions stayed deliberately light (part of the "too many fields" feedback). |
 | Per-list status sets | Statuses per space only | Keeps cross-list boards and automations coherent; nobody asked for per-list sets. |
 | Access levels view/comment/edit/full, restriction | view/edit/manage; private lists instead of restriction | Three levels cover the real cases; a private list is the understandable version of "restricted". Assignment opens one task at edit, watching at view. |
-| Saved views with stored filter configs | List/Board toggle + a filter bar (not persisted) | Saved views can come later without schema changes; filters cover the daily need. |
+| Saved views with stored filter configs | List, Board, Calendar, Timeline and Workload views; filters and sort remembered per list in the browser | Covers the daily need without a views table; shared server-side views can come later without schema changes. |
 | `tsvector` full-text search | Title/key ILIKE search, exact key pinned first | Descriptions are short; title search found everything people looked for. Easy to upgrade later. |
 | Attachments on tasks and comments | Attachments on tasks only | Comment attachments were never requested. |
 | Named checklists (several per task) | One flat checklist per task | Matches how checklists were actually used in Vikunja. |
-| Any number of replicas | **One backend replica** | The per-user rate limiter is in-process and the due-sweep ticker is per-process (run history dedups, but two replicas would race). |
-| Due-soon notifier under an advisory lock | Due-date automations (sweep each minute) | Reminders became an automation ("due in 1 day → notify / set urgent") instead of a hard-coded notifier. |
+| Any number of replicas | **One backend replica** ([ADR 0001](adr/0001-single-backend-replica.md)) | The rate limiter, the stream limit and the background jobs (due automations, reminders, email, retention) run in-process. |
+| Due-soon notifier under an advisory lock | Built-in due-soon reminders (once per task, person and due date) plus due-date automations | Reminders are on by default (`reminders.due_soon_days`); automations add custom reactions. |
+| Polling only | Server-Sent Events from PostgreSQL `LISTEN/NOTIFY`, polling as fallback ([ADR 0006](adr/0006-live-updates-sse.md)) | Boards refresh within a second; triggers catch every change, including automations and jobs. |
+| In-app Inbox only | Inbox plus email per person's choice, SMTP from Den or `SMTP_*` ([ADR 0007](adr/0007-settings-and-smtp-from-den.md)) | People asked to hear about assignments without keeping a tab open. |
+| Custom fields per location | Custom fields per space | Same reason as statuses per space: one field set per space keeps boards, filters and imports coherent. |
 
 Also added beyond the plan: one space per HR department created
 automatically through `/api/internal/departments` (see Decided, below),
@@ -46,6 +53,10 @@ and cross-space moves, and a `tasks-dev` compose profile (ports
 8161/3010, database `tasks_dev`) for developing next to the live one.
 
 ## Decisions so far
+
+*(Original plan. Superseded where "Built" above says otherwise: statuses
+have three categories and no per-list sets, views are not stored, live
+updates use SSE, descriptions are plain text.)*
 
 | Question | Decision |
 | --- | --- |
@@ -251,9 +262,10 @@ favorites     (user, location_kind, location_id, position)
 | Smoke | `scripts/smoke-tasks.ps1` |
 | README | root table rows + a Tasks note, `tasks/README.md` like Learn's |
 
-Stateless backend: any number of replicas, `RollingUpdate`, no volume.
-The due-soon notifier runs under a Postgres advisory lock so only one
-replica sends them.
+*(Superseded by [ADR 0001](adr/0001-single-backend-replica.md): one
+backend replica, `Recreate` strategy, no volume.)* ~~Stateless backend: any
+number of replicas, `RollingUpdate`, no volume. The due-soon notifier runs
+under a Postgres advisory lock so only one replica sends them.~~
 
 ## Milestones
 
@@ -280,6 +292,9 @@ replica sends them.
    READMEs, operations notes.
 
 ## Out of the first slice
+
+*(All built before 1.0.0 except task templates, sprints, table and mind-map
+views, and the Desk/wiki/Rally integrations; see the changelog.)*
 
 - **Custom fields** (text, number, dropdown, date, person, checkbox, URL) —
   the biggest gap against ClickUp; plan right after the first slice. Stored
@@ -311,6 +326,10 @@ Decided (November 2026):
   who owns the relationship. Revisit for next year's event if externals
   keep asking for access.
 
-Still open:
+- **Calendar before 1.0** (maintainer, November 2026): a calendar per list
+  and a cross-space calendar page, plus timeline and workload views.
+- **HR's department hook** sends `{id, slug, name, group}` on create and
+  save, and may add `"archived": true`; Tasks ignores unknown fields so HR
+  can add fields first.
 
-- Is Calendar view needed for the first event, or can it wait?
+Still open: none.
