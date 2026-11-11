@@ -409,7 +409,7 @@ func (s *Service) DeleteSpace(ctx context.Context, actor, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAudit(ctx, tx, actor, "space", id, map[string]any{"name": name, "key": key, "tasks": taskCount}); err != nil {
+	if err := writeAudit(ctx, tx, &actor, "space", id, "deleted", map[string]any{"name": name, "key": key, "tasks": taskCount}); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM spaces WHERE id = $1`, id); err != nil {
@@ -694,7 +694,7 @@ func (s *Service) DeleteList(ctx context.Context, actor, id uuid.UUID) error {
 	if count <= 1 {
 		return httperror.Conflict("a space needs at least one list")
 	}
-	if err := writeAudit(ctx, tx, actor, "list", id, map[string]any{"name": name, "space_id": spaceID, "tasks": taskCount}); err != nil {
+	if err := writeAudit(ctx, tx, &actor, "list", id, "deleted", map[string]any{"name": name, "space_id": spaceID, "tasks": taskCount}); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM lists WHERE id = $1`, id); err != nil {

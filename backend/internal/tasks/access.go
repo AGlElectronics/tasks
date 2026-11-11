@@ -63,7 +63,11 @@ type Grant struct {
 	SpaceID     *uuid.UUID `json:"space_id,omitempty"`
 	ListID      *uuid.UUID `json:"list_id,omitempty"`
 	SubjectType string     `json:"subject_type"` // user | group
-	Subject     string     `json:"subject"`      // user id or group name
+	// Subject is the user id, or the group name as the admin typed it.
+	Subject string `json:"subject"`
+	// SubjectKey is what grants match on: the user id, or the normalised
+	// group name (see GroupKey).
+	SubjectKey string `json:"subject_key"`
 	// DisplayName resolves user subjects for the UI; groups show verbatim.
 	DisplayName string `json:"display_name"`
 	Level       string `json:"level"`
@@ -78,14 +82,14 @@ type GrantScope struct {
 // ListGrants returns the sharing entries for a space or list.
 func (s *Service) ListGrants(ctx context.Context, scope GrantScope) ([]Grant, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT g.id, g.space_id, g.list_id, g.subject_type, g.subject, g.level,
+		SELECT g.id, g.space_id, g.list_id, g.subject_type, g.subject, g.subject_key, g.level,
 		       CASE WHEN g.subject_type = 'user'
 		            THEN COALESCE((SELECT u.display_name FROM users u WHERE u.id::text = g.subject), 'Former user')
 		            ELSE g.subject END
 		  FROM access_grants g
 		 WHERE ($1::uuid IS NULL OR g.space_id = $1) AND ($2::uuid IS NULL OR g.list_id = $2)
 		   AND (($1::uuid IS NOT NULL) OR ($2::uuid IS NOT NULL))
-		 ORDER BY g.subject_type, 7`, scope.SpaceID, scope.ListID)
+		 ORDER BY g.subject_type, 8`, scope.SpaceID, scope.ListID)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +97,7 @@ func (s *Service) ListGrants(ctx context.Context, scope GrantScope) ([]Grant, er
 	out := []Grant{}
 	for rows.Next() {
 		var g Grant
-		if err := rows.Scan(&g.ID, &g.SpaceID, &g.ListID, &g.SubjectType, &g.Subject, &g.Level, &g.DisplayName); err != nil {
+		if err := rows.Scan(&g.ID, &g.SpaceID, &g.ListID, &g.SubjectType, &g.Subject, &g.SubjectKey, &g.Level, &g.DisplayName); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -134,70 +138,99 @@ func (s *Service) PutGrant(ctx context.Context, actor uuid.UUID, scope GrantScop
 			}
 		}
 	}
+	if in.SubjectType == "group" && GroupKey(in.Subject) == "" {
+		issues["subject"] = "required"
+	}
 	if len(issues) > 0 {
 		return Grant{}, httperror.Validation("invalid grant", issues)
 	}
+	key := subjectKey(in.SubjectType, in.Subject)
 
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Grant{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	// Re-granting the same group spelled differently updates the level and
+	// the name shown in the UI.
 	var id uuid.UUID
-	var err error
 	if scope.SpaceID != nil {
-		err = s.pool.QueryRow(ctx, `
-			INSERT INTO access_grants (space_id, subject_type, subject, level, created_by)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (space_id, subject_type, subject) WHERE space_id IS NOT NULL
-			DO UPDATE SET level = EXCLUDED.level
-			RETURNING id`, *scope.SpaceID, in.SubjectType, in.Subject, in.Level, actor).Scan(&id)
+		err = tx.QueryRow(ctx, `
+			INSERT INTO access_grants (space_id, subject_type, subject, subject_key, level, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (space_id, subject_type, subject_key) WHERE space_id IS NOT NULL
+			DO UPDATE SET level = EXCLUDED.level, subject = EXCLUDED.subject
+			RETURNING id`, *scope.SpaceID, in.SubjectType, in.Subject, key, in.Level, actor).Scan(&id)
 	} else {
-		err = s.pool.QueryRow(ctx, `
-			INSERT INTO access_grants (list_id, subject_type, subject, level, created_by)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (list_id, subject_type, subject) WHERE list_id IS NOT NULL
-			DO UPDATE SET level = EXCLUDED.level
-			RETURNING id`, *scope.ListID, in.SubjectType, in.Subject, in.Level, actor).Scan(&id)
+		err = tx.QueryRow(ctx, `
+			INSERT INTO access_grants (list_id, subject_type, subject, subject_key, level, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (list_id, subject_type, subject_key) WHERE list_id IS NOT NULL
+			DO UPDATE SET level = EXCLUDED.level, subject = EXCLUDED.subject
+			RETURNING id`, *scope.ListID, in.SubjectType, in.Subject, key, in.Level, actor).Scan(&id)
 	}
 	if err != nil {
 		return Grant{}, err
 	}
+	if err := writeAudit(ctx, tx, &actor, "grant", id, "granted", map[string]any{
+		"space_id": scope.SpaceID, "list_id": scope.ListID,
+		"subject_type": in.SubjectType, "subject": in.Subject, "level": in.Level,
+	}); err != nil {
+		return Grant{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Grant{}, err
+	}
 	var g Grant
 	err = s.pool.QueryRow(ctx, `
-		SELECT g.id, g.space_id, g.list_id, g.subject_type, g.subject, g.level,
+		SELECT g.id, g.space_id, g.list_id, g.subject_type, g.subject, g.subject_key, g.level,
 		       CASE WHEN g.subject_type = 'user'
 		            THEN COALESCE((SELECT u.display_name FROM users u WHERE u.id::text = g.subject), 'Former user')
 		            ELSE g.subject END
 		  FROM access_grants g WHERE g.id = $1`, id,
-	).Scan(&g.ID, &g.SpaceID, &g.ListID, &g.SubjectType, &g.Subject, &g.Level, &g.DisplayName)
+	).Scan(&g.ID, &g.SpaceID, &g.ListID, &g.SubjectType, &g.Subject, &g.SubjectKey, &g.Level, &g.DisplayName)
 	return g, err
 }
 
 // DeleteGrant removes one grant by id, scoped so a handler can ensure it
 // belongs to the space or list it authorized.
-func (s *Service) DeleteGrant(ctx context.Context, id uuid.UUID, scope GrantScope) error {
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM access_grants
-		 WHERE id = $1 AND ($2::uuid IS NULL OR space_id = $2) AND ($3::uuid IS NULL OR list_id = $3)`,
-		id, scope.SpaceID, scope.ListID)
+func (s *Service) DeleteGrant(ctx context.Context, actor, id uuid.UUID, scope GrantScope) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var subjectType, subject, level string
+	err = tx.QueryRow(ctx, `
+		DELETE FROM access_grants
+		 WHERE id = $1 AND ($2::uuid IS NULL OR space_id = $2) AND ($3::uuid IS NULL OR list_id = $3)
+		RETURNING subject_type, subject, level`,
+		id, scope.SpaceID, scope.ListID).Scan(&subjectType, &subject, &level)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return httperror.NotFound("grant")
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err := writeAudit(ctx, tx, &actor, "grant", id, "revoked", map[string]any{
+		"space_id": scope.SpaceID, "list_id": scope.ListID,
+		"subject_type": subjectType, "subject": subject, "level": level,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // grantedLevel computes the strongest grant the user or their groups hold
 // on a space or on a list (one query).
 func (s *Service) grantedLevel(ctx context.Context, scope GrantScope, userID uuid.UUID, groups []string) (Level, error) {
-	if groups == nil {
-		groups = []string{}
-	}
 	var lvl int
 	err := s.pool.QueryRow(ctx, `
 		SELECT COALESCE(max(CASE level WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'manage' THEN 3 END), 0)
 		  FROM access_grants
-		 WHERE ((subject_type = 'user' AND subject = $3::text) OR (subject_type = 'group' AND subject = ANY($4)))
+		 WHERE ((subject_type = 'user' AND subject_key = $3::text) OR (subject_type = 'group' AND subject_key = ANY($4)))
 		   AND (($1::uuid IS NOT NULL AND space_id = $1) OR ($2::uuid IS NOT NULL AND list_id = $2))`,
-		scope.SpaceID, scope.ListID, userID.String(), groups).Scan(&lvl)
+		scope.SpaceID, scope.ListID, userID.String(), groupKeys(groups)).Scan(&lvl)
 	return Level(lvl), err
 }
 
@@ -230,15 +263,12 @@ type UserAccess struct {
 
 // AccessFor loads every grant that applies to the user in one query.
 func (s *Service) AccessFor(ctx context.Context, userID uuid.UUID, groups []string) (UserAccess, error) {
-	if groups == nil {
-		groups = []string{}
-	}
 	acc := UserAccess{SpaceLevels: map[uuid.UUID]Level{}, ListLevels: map[uuid.UUID]Level{}}
 	rows, err := s.pool.Query(ctx, `
 		SELECT space_id, list_id, max(CASE level WHEN 'view' THEN 1 WHEN 'edit' THEN 2 WHEN 'manage' THEN 3 END)
 		  FROM access_grants
-		 WHERE (subject_type = 'user' AND subject = $1::text) OR (subject_type = 'group' AND subject = ANY($2))
-		 GROUP BY space_id, list_id`, userID.String(), groups)
+		 WHERE (subject_type = 'user' AND subject_key = $1::text) OR (subject_type = 'group' AND subject_key = ANY($2))
+		 GROUP BY space_id, list_id`, userID.String(), groupKeys(groups))
 	if err != nil {
 		return acc, err
 	}

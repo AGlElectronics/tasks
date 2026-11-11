@@ -688,8 +688,10 @@ func addEvent(ctx context.Context, tx pgx.Tx, taskID, actor uuid.UUID, kind stri
 	return err
 }
 
-// writeAudit records a destructive action in the audit_log (TASK-29).
-func writeAudit(ctx context.Context, tx pgx.Tx, actor uuid.UUID, entity string, entityID uuid.UUID, data map[string]any) error {
+// writeAudit records a destructive or access-changing action in the
+// audit_log (TASK-29). actor is nil for the system (retention sweep, HR's
+// department hook).
+func writeAudit(ctx context.Context, tx pgx.Tx, actor *uuid.UUID, entity string, entityID uuid.UUID, action string, data map[string]any) error {
 	if data == nil {
 		data = map[string]any{}
 	}
@@ -697,7 +699,8 @@ func writeAudit(ctx context.Context, tx pgx.Tx, actor uuid.UUID, entity string, 
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO audit_log (actor_id, entity, entity_id, data) VALUES ($1, $2, $3, $4)`, actor, entity, entityID, raw)
+	_, err = tx.Exec(ctx, `INSERT INTO audit_log (actor_id, entity, entity_id, action, data) VALUES ($1, $2, $3, $4, $5)`,
+		actor, entity, entityID, action, raw)
 	return err
 }
 
@@ -1093,7 +1096,7 @@ func (s *Service) DeleteTask(ctx context.Context, actor, id uuid.UUID) error {
 	if err := addEvent(ctx, tx, id, actor, "deleted", nil); err != nil {
 		return err
 	}
-	if err := writeAudit(ctx, tx, actor, "task", id, map[string]any{"key": key, "title": title, "subtasks": subtasks}); err != nil {
+	if err := writeAudit(ctx, tx, &actor, "task", id, "deleted", map[string]any{"key": key, "title": title, "subtasks": subtasks}); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1198,7 +1201,7 @@ func (s *Service) PurgeTask(ctx context.Context, actor, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAudit(ctx, tx, actor, "task", id, map[string]any{"key": key, "title": title, "purged": true}); err != nil {
+	if err := writeAudit(ctx, tx, &actor, "task", id, "purged", map[string]any{"key": key, "title": title}); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, id); err != nil {
@@ -1327,7 +1330,7 @@ func (s *Service) DeleteComment(ctx context.Context, actor, commentID uuid.UUID,
 	if len(body) > 200 {
 		body = body[:200]
 	}
-	if err := writeAudit(ctx, tx, actor, "comment", commentID, map[string]any{"task_id": taskID, "body": body}); err != nil {
+	if err := writeAudit(ctx, tx, &actor, "comment", commentID, "deleted", map[string]any{"task_id": taskID, "body": body}); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM comments WHERE id = $1`, commentID); err != nil {

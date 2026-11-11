@@ -545,7 +545,7 @@ func (h *taskHandler) deleteGrant(r *http.Request, u *auth.User) (int, any, erro
 	if err != nil {
 		return 0, nil, err
 	}
-	return http.StatusNoContent, nil, h.svc.DeleteGrant(r.Context(), id, scope)
+	return http.StatusNoContent, nil, h.svc.DeleteGrant(r.Context(), u.ID, id, scope)
 }
 
 // ----------------------------------------------------------------------------

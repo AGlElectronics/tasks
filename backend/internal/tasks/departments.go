@@ -99,10 +99,10 @@ func (s *Service) EnsureDepartmentSpace(ctx context.Context, orgID uuid.UUID, in
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO access_grants (space_id, subject_type, subject, level)
-		VALUES ($1, 'group', $2, 'edit')
-		ON CONFLICT (space_id, subject_type, subject) WHERE space_id IS NOT NULL
-		DO UPDATE SET level = EXCLUDED.level`, id, in.Group); err != nil {
+		INSERT INTO access_grants (space_id, subject_type, subject, subject_key, level)
+		VALUES ($1, 'group', $2, $3, 'edit')
+		ON CONFLICT (space_id, subject_type, subject_key) WHERE space_id IS NOT NULL
+		DO UPDATE SET level = EXCLUDED.level`, id, in.Group, GroupKey(in.Group)); err != nil {
 		return Space{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {

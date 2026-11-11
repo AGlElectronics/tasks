@@ -80,6 +80,15 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 
 ### Security
 
+- Group grants match IdP groups the way every Con Services module will:
+  spaces trimmed, one leading `/` ignored (Keycloak's full-path form),
+  case-insensitive, and the whole path must match (`/departments/ops`
+  matches `departments/ops` but not `ops`). Grants show the name as it was
+  typed (`subject`) and match on `subject_key`. On upgrade, the migration
+  fills `subject_key` for existing grants and merges grants that only
+  differed in case or a leading `/`, keeping the strongest level.
+- Giving and removing access (grants) is written to the audit log.
+
 - Rate limits cannot be bypassed with a fake `X-Forwarded-For` header: the
   backend reads the client address from it only when the connection comes
   from a trusted proxy (`TRUSTED_PROXY_CIDRS`), and never reads

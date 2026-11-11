@@ -109,7 +109,7 @@ func (s *Service) DeleteAttachment(ctx context.Context, actor, id uuid.UUID) err
 	if err != nil {
 		return err
 	}
-	if err := writeAudit(ctx, tx, actor, "attachment", id, map[string]any{"filename": filename, "task_id": taskID}); err != nil {
+	if err := writeAudit(ctx, tx, &actor, "attachment", id, "deleted", map[string]any{"filename": filename, "task_id": taskID}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -60,7 +60,10 @@ export type Grant = {
   space_id?: string;
   list_id?: string;
   subject_type: 'user' | 'group';
+  /** User id, or the group name as typed. */
   subject: string;
+  /** What the grant matches on: user id, or the normalised group name. */
+  subject_key: string;
   display_name: string;
   level: AccessLevel;
 };
