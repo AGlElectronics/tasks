@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
-import { CalendarDays, Flag, ListTree, MessageSquare } from 'lucide-react';
+import { CalendarDays, Clock, Flag, ListTree, Lock, MessageSquare, Repeat } from 'lucide-react';
 import type { Person, Priority, Status, Task } from '@/api/tasks';
-import { dueLabel } from '@/lib/format';
+import { describeRecurrence, dueLabel, formatMinutes } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 const PRIORITY_COLORS: Record<Priority, string> = {
@@ -138,6 +138,27 @@ export function TaskMeta({ task }: { task: Task }) {
         <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
           <MessageSquare className="w-3.5 h-3.5" />
           {task.comment_count}
+        </span>
+      ) : null}
+      {task.blocked_by_open > 0 && task.status.category !== 'done' ? (
+        <span
+          className="inline-flex items-center gap-1 text-xs text-amber-600 font-semibold"
+          title={`Waiting for ${task.blocked_by_open} unfinished task${task.blocked_by_open === 1 ? '' : 's'}`}
+        >
+          <Lock className="w-3.5 h-3.5" />
+          {task.blocked_by_open}
+        </span>
+      ) : null}
+      {task.recurrence ? (
+        <span className="inline-flex items-center text-xs text-muted-foreground" title={describeRecurrence(task.recurrence)}>
+          <Repeat className="w-3.5 h-3.5" />
+        </span>
+      ) : null}
+      {task.time_spent_minutes > 0 || task.estimate_minutes ? (
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title="Time logged / estimate">
+          <Clock className="w-3.5 h-3.5" />
+          {formatMinutes(task.time_spent_minutes)}
+          {task.estimate_minutes ? ` / ${formatMinutes(task.estimate_minutes)}` : ''}
         </span>
       ) : null}
     </>

@@ -105,6 +105,34 @@ export type Task = {
   checklist_done: number;
   /** Custom field id → value (string, number, boolean, YYYY-MM-DD or select option id). */
   fields: Record<string, FieldValue>;
+  recurrence: Recurrence | null;
+  /** Unfinished tasks this one waits for. */
+  blocked_by_open: number;
+  estimate_minutes: number | null;
+  time_spent_minutes: number;
+};
+
+export type Recurrence = { freq: 'daily' | 'weekly' | 'monthly' | 'yearly'; interval: number };
+
+export type DepRef = {
+  id: string;
+  key: string;
+  title: string;
+  status: { id: string; name: string; color: string; category: Category };
+  done: boolean;
+  list_id: string;
+  space_id: string;
+};
+
+export type TimeEntry = {
+  id: string;
+  task_id: string;
+  user_id: string | null;
+  user_name: string;
+  minutes: number;
+  spent_on: string;
+  note: string;
+  created_at: string;
 };
 
 export type FieldType = 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'url';
@@ -213,6 +241,11 @@ export type TaskDetail = Task & {
   /** Totals; comments and events hold only the newest 100 and 200. */
   comments_total: number;
   events_total: number;
+  blocked_by: DepRef[];
+  blocking: DepRef[];
+  /** Dependencies on tasks you cannot see. */
+  hidden_dependencies: number;
+  time_entries: TimeEntry[];
 };
 
 export type ListWithSpace = List & { space: Space; my_level: AccessLevel | ''; can_edit: boolean };
@@ -252,8 +285,26 @@ export type TaskPatch = {
   tag_ids?: string[];
   /** Custom field id → value; null clears it. */
   fields?: Record<string, FieldValue | null>;
+  recurrence?: Recurrence | null;
+  estimate_minutes?: number | null;
   version?: number;
 };
+
+// Dependencies
+export const addDependency = (taskId: string, dependsOn: string) =>
+  apiRequest<DepRef>(`/api/v1/tasks/${taskId}/dependencies`, { method: 'POST', body: { depends_on: dependsOn } });
+export const removeDependency = (taskId: string, other: string) =>
+  apiRequest<void>(`/api/v1/tasks/${taskId}/dependencies/${encodeURIComponent(other)}`, { method: 'DELETE' });
+
+// Time tracking
+export const logTime = (taskId: string, body: { minutes: number; spent_on?: string; note?: string }) =>
+  apiRequest<TimeEntry>(`/api/v1/tasks/${taskId}/time`, { method: 'POST', body });
+export const deleteTimeEntry = (id: string) => apiRequest<void>(`/api/v1/time/${id}`, { method: 'DELETE' });
+export const listTimeReport = (listId: string, q: { from?: string; to?: string }, signal?: AbortSignal) =>
+  apiRequest<{ people: { user_id: string | null; user_name: string; minutes: number }[]; total_minutes: number }>(
+    `/api/v1/lists/${listId}/time-report`,
+    { signal, query: q }
+  );
 
 export const listSpaces = (signal?: AbortSignal, includeArchived?: boolean) =>
   apiRequest<{ spaces: Space[]; truncated: boolean }>('/api/v1/spaces', {

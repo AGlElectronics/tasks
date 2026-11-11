@@ -48,9 +48,10 @@ import { PageContainer } from '@/components/ui/PageHeader';
 import { ErrorRow, LoadingRow } from '@/components/ui/States';
 import { Avatar, DueBadge, PriorityFlag, StatusSelect, TaskLink } from '@/components/TaskBits';
 import { TaskFields } from '@/components/CustomFields';
+import { DependenciesSection, RecurrencePicker, TimeSection } from '@/components/TaskPlanning';
 import { useMe } from '@/hooks/useMe';
 import { notify } from '@/lib/notify';
-import { timeAgo } from '@/lib/format';
+import { formatMinutes, timeAgo } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 function str(v: unknown) {
@@ -99,6 +100,22 @@ function describeBase(e: TaskEvent): string {
       return 'restored it from the trash';
     case 'field':
       return to ? `set ${str(e.data.field)} to ${to}` : `cleared ${str(e.data.field)}`;
+    case 'dependency_added':
+      return str(e.data.blocked_by) ? `made it wait for ${str(e.data.blocked_by)}` : `made ${str(e.data.blocking)} wait for it`;
+    case 'dependency_removed':
+      return str(e.data.blocked_by)
+        ? `stopped it waiting for ${str(e.data.blocked_by)}`
+        : `stopped ${str(e.data.blocking)} waiting for it`;
+    case 'recurrence':
+      return to ? `set it to repeat ${to}` : 'stopped it repeating';
+    case 'recurred':
+      return `completed it; the next one is ${str(e.data.next)}`;
+    case 'estimate':
+      return typeof e.data.to === 'number' ? `estimated ${formatMinutes(e.data.to)}` : 'removed the estimate';
+    case 'time_logged':
+      return `logged ${formatMinutes(Number(e.data.minutes) || 0)}`;
+    case 'time_removed':
+      return `removed ${formatMinutes(Number(e.data.minutes) || 0)} logged by ${str(e.data.user)}`;
     case 'completed':
       return 'completed it (its status became a done status)';
     case 'reopened':
@@ -587,7 +604,11 @@ export function TaskPage() {
             </div>
           ) : null}
 
+          <DependenciesSection task={t} refresh={refresh} />
+
           <AttachmentsSection task={t} refresh={refresh} />
+
+          <TimeSection task={t} meId={me?.id} refresh={refresh} onEstimate={(m) => set({ estimate_minutes: m })} />
 
           <div>
             <h2 className="text-sm font-bold mb-2">Activity</h2>
@@ -733,6 +754,7 @@ export function TaskPage() {
               <TagPicker task={t} onChange={(ids) => set({ tag_ids: ids })} />
             </div>
             <TaskFields spaceId={t.space_id} values={t.fields} onChange={(id, v) => set({ fields: { [id]: v } })} />
+            {!t.parent_id ? <RecurrencePicker value={t.recurrence} onChange={(r) => set({ recurrence: r })} /> : null}
 
             {!showMore ? (
               <button
