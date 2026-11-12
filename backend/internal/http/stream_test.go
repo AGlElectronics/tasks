@@ -40,7 +40,7 @@ func openStream(t *testing.T, base string, p as) *sseClient {
 	c := &sseClient{t: t, events: make(chan streamEvent, 100), cancel: cancel}
 	ready := make(chan struct{})
 	go func() {
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		sc := bufio.NewScanner(res.Body)
 		event := ""
 		for sc.Scan() {
@@ -49,9 +49,10 @@ func openStream(t *testing.T, base string, p as) *sseClient {
 			case strings.HasPrefix(line, "event: "):
 				event = strings.TrimPrefix(line, "event: ")
 			case strings.HasPrefix(line, "data: "):
-				if event == "ready" {
+				switch event {
+				case "ready":
 					close(ready)
-				} else if event == "change" {
+				case "change":
 					var ev streamEvent
 					if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev) == nil {
 						c.events <- ev
@@ -157,7 +158,7 @@ func TestLiveUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.StatusCode != 429 {
 		t.Fatalf("6th stream: %d", res.StatusCode)
 	}

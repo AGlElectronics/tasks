@@ -49,14 +49,14 @@ func fakeSMTP(t *testing.T) (addr string, got chan string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	got = make(chan string, 10)
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		r := bufio.NewReader(conn)
 		write := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
 		write("220 fake ready")

@@ -136,7 +136,7 @@ func TestGrantSubjectKeyBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestGrantSubjectKeyBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type grant struct{ subject, key, level string }
 	var got []grant
 	for rows.Next() {

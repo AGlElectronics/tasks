@@ -86,10 +86,10 @@ func Send(ctx context.Context, cfg Config, msgs ...Message) error {
 	}
 	c, err := smtp.NewClient(conn, cfg.Host)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("smtp hello: %w", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if cfg.Security == "starttls" {
 		ok, _ := c.Extension("STARTTLS")
 		if !ok {

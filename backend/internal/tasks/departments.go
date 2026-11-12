@@ -192,7 +192,7 @@ func freeSpaceKey(ctx context.Context, tx pgx.Tx, slug string) (string, error) {
 
 func keyFromSlug(slug string) string {
 	words := strings.FieldsFunc(strings.ToUpper(slug), func(r rune) bool {
-		return !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+		return (r < 'A' || r > 'Z') && (r < '0' || r > '9')
 	})
 	key := ""
 	if len(words) >= 2 {
