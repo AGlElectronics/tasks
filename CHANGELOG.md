@@ -120,7 +120,7 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 - Development: `infra/docker-compose.yml` mounts
   `infra/frontend-config/compose.json` (dev sign-in) as the web app's
   `/config.json`; set `FRONTEND_CONFIG` in `.env` to use another file.
-  Building from source needs Go 1.27.3 or newer.
+  Building from source needs Go 1.27.4 or newer.
 - Import tasks into a list from a plain CSV, a ClickUp CSV export or a
   Vikunja `data.json` (*List → Import*, `POST /api/v1/lists/{list}/import`
   with `format`, `content` and `dry_run`; edit access on the list). A dry
@@ -315,7 +315,7 @@ counts rebuilds of the same version. Rebuilds get no entry here.
   backend sets its own.
 - No image runs as root. The web app runs on
   `nginxinc/nginx-unprivileged:1.30.6-alpine` as UID 101 and listens on
-  port 8080. All images are built with Go 1.27.3 and pass the CI image
+  port 8080. All images are built with Go 1.27.4 and pass the CI image
   scan (Trivy, HIGH and CRITICAL issues that have a fix).
 - A production build never falls back to dev sign-in: a `/config.json`
   without `authMode` means OIDC.
