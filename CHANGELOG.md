@@ -213,6 +213,9 @@ counts rebuilds of the same version. Rebuilds get no entry here.
 
 ### Changed
 
+- CI passes `den-major: "1"`. A release whose MAJOR is not 1 is refused once the shared `ci-v1` tag points at the workflow that has that input.
+- Standalone Compose uses PostgreSQL `postgres:16.15-alpine`.
+- The Helm chart description says CI renders and lints the chart; the first production install is still pending.
 - **BREAKING:** `GET /api/portal/todos` names the person only with the
   headers `X-Den-User-Issuer` and `X-Den-User-Subject`. The
   `?issuer=&subject=` query fallback is gone: Den never sends it, and a
