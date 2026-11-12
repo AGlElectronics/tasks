@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"testing"
 
@@ -132,15 +131,35 @@ func TestGrantSubjectKeyBackfill(t *testing.T) {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	db, err := sql.Open("pgx", dsn)
+	// A separate database, so this partial migration does not drop the schema
+	// the other tests share or wait on locks those sessions still hold.
+	admin, err := openTestDB()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = db.Close() }()
-	if _, err := db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+	if err := recreateBackfillDatabase(ctx, admin); err != nil {
+		_ = admin.Close()
 		t.Fatal(err)
 	}
+	db, err := openBackfillDB()
+	if err != nil {
+		_ = dropBackfillDatabase(context.Background(), admin)
+		_ = admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close backfill database: %v", err)
+		}
+		if err := dropBackfillDatabase(context.Background(), admin); err != nil {
+			t.Errorf("drop backfill database: %v", err)
+		}
+		if err := admin.Close(); err != nil {
+			t.Errorf("close admin database: %v", err)
+		}
+	})
 	goose.SetBaseFS(migrations.FS)
+	goose.SetTableName("goose_db_version")
 	goose.SetLogger(goose.NopLogger())
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatal(err)
@@ -150,7 +169,10 @@ func TestGrantSubjectKeyBackfill(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO spaces (id, organization_id, name, key)
-		VALUES ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-000000000010', 'Old', 'OLD');
+		VALUES ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-000000000010', 'Old', 'OLD')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
 		INSERT INTO access_grants (space_id, subject_type, subject, level, created_at) VALUES
 		  ('00000000-0000-0000-0000-0000000000a1', 'group', 'Dept-Kitchen', 'view', now() - interval '3 days'),
 		  ('00000000-0000-0000-0000-0000000000a1', 'group', '/dept-kitchen', 'manage', now() - interval '2 days'),
@@ -175,6 +197,9 @@ func TestGrantSubjectKeyBackfill(t *testing.T) {
 			t.Fatal(err)
 		}
 		got = append(got, g)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	want := []grant{
 		{"11111111-1111-1111-1111-111111111111", "11111111-1111-1111-1111-111111111111", "edit"},

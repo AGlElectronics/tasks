@@ -104,10 +104,19 @@ func (c *sseClient) quiet(listID string) {
 
 func TestLiveUpdates(t *testing.T) {
 	h := newHarness(t)
+	// Wait until the hub releases its connection. Closing the pool does not
+	// wait for a connection this goroutine still holds.
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	hub := realtime.NewHub(h.pool, zerolog.Nop())
-	go hub.Run(ctx)
+	stopped := make(chan struct{})
+	go func() {
+		hub.Run(ctx)
+		close(stopped)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
 	select {
 	case <-hub.Ready():
 	case <-time.After(5 * time.Second):

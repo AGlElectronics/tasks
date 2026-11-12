@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,14 +11,11 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 	"github.com/rs/zerolog"
 
 	"github.com/AGlElectronics/tasks/backend/internal/auth"
 	"github.com/AGlElectronics/tasks/backend/internal/brand"
 	"github.com/AGlElectronics/tasks/backend/internal/config"
-	"github.com/AGlElectronics/tasks/backend/migrations"
 )
 
 // Authorization tests against a real Postgres (TASK-2). They run only when
@@ -27,7 +23,8 @@ import (
 //
 //	TEST_DATABASE_URL=postgres://tasks:tasks@localhost:5440/tasks_test?sslmode=disable go test ./internal/http
 //
-// The schema is dropped and re-migrated on every run.
+// TestMain migrates that database once. Each test empties the tables, so
+// tests do not depend on order and do not rebuild the schema.
 const accessTOML = `
 organization = "demo-org"
 
@@ -74,29 +71,16 @@ func newHarnessWith(t *testing.T, tweak func(*config.Config)) *harness {
 		t.Skip("TEST_DATABASE_URL not set; skipping authorization tests")
 	}
 	ctx := context.Background()
-
-	db, err := sql.Open("pgx", dsn)
+	db, err := openTestDB()
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer func() { _ = db.Close() }()
-	if _, err := db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Fatalf("reset schema: %v", err)
-	}
-	goose.SetBaseFS(migrations.FS)
-	goose.SetTableName("goose_db_version")
-	goose.SetLogger(goose.NopLogger())
-	if err := goose.SetDialect("postgres"); err != nil {
-		t.Fatalf("goose dialect: %v", err)
-	}
-	if err := goose.UpContext(ctx, db, "."); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO organizations (slug, display_name) VALUES ('demo-org', 'Demo Org') ON CONFLICT (slug) DO NOTHING`); err != nil {
-		t.Fatalf("seed org: %v", err)
+	if err := resetTestData(ctx, db); err != nil {
+		t.Fatalf("reset database: %v", err)
 	}
 
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := openTestPool(ctx)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -324,7 +308,7 @@ func TestAuthorization(t *testing.T) {
 
 func mustPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	pool, err := openTestPool(context.Background())
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
