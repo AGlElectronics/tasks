@@ -215,18 +215,20 @@ func decodeCursor(s string, into any) error {
 }
 
 // ListTasks returns one page of a list's tasks and subtasks in board order,
-// plus the cursor for the next page ("" on the last page).
-func (s *Service) ListTasks(ctx context.Context, listID uuid.UUID, limit int, cursor string) ([]Task, string, error) {
+// plus the cursor for the next page ("" on the last page). The filter
+// narrows by label and urgency; the zero filter returns everything.
+func (s *Service) ListTasks(ctx context.Context, listID uuid.UUID, f TaskFilter, limit int, cursor string) ([]Task, string, error) {
 	limit = ClampLimit(limit)
 	var c listCursor
 	if err := decodeCursor(cursor, &c); err != nil {
 		return nil, "", err
 	}
+	fsql, fargs := f.sql("t", 6)
+	args := append([]any{listID, cursor == "", c.Position, c.Number, limit + 1}, fargs...)
 	out, err := s.queryTasks(ctx, `
 		WHERE t.list_id = $1 AND t.deleted_at IS NULL
-		  AND ($2::bool OR (t.position, t.number) > ($3::float8, $4::int))
-		ORDER BY t.position, t.number LIMIT $5`,
-		listID, cursor == "", c.Position, c.Number, limit+1)
+		  AND ($2::bool OR (t.position, t.number) > ($3::float8, $4::int))`+fsql+`
+		ORDER BY t.position, t.number LIMIT $5`, args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -240,19 +242,30 @@ func (s *Service) ListTasks(ctx context.Context, listID uuid.UUID, limit int, cu
 }
 
 // MyWork returns one page of open tasks assigned to the user plus ones they
-// finished in the last week, soonest due first, and the next-page cursor.
-func (s *Service) MyWork(ctx context.Context, userID uuid.UUID, limit int, cursor string) ([]Task, string, error) {
+// finished in the last week, and the next-page cursor. The default order is
+// soonest due first; sort "urgency" puts the most urgent first and breaks
+// ties by due date. The filter narrows by label and urgency.
+func (s *Service) MyWork(ctx context.Context, userID uuid.UUID, f TaskFilter, sort string, limit int, cursor string) ([]Task, string, error) {
 	limit = ClampLimit(limit)
 	var c offsetCursor
 	if err := decodeCursor(cursor, &c); err != nil {
 		return nil, "", err
 	}
+	if !ValidMyWorkSort(sort) {
+		return nil, "", httperror.Validation("invalid sort", map[string]string{"sort": "must be due or urgency"})
+	}
+	order := `st.category = 'done', t.due_at NULLS LAST, t.updated_at DESC, t.id`
+	if sort == SortUrgency {
+		order = `st.category = 'done', ` + urgencyRank("t") + `, t.due_at NULLS LAST, t.updated_at DESC, t.id`
+	}
+	fsql, fargs := f.sql("t", 4)
+	args := append([]any{userID, c.Offset, limit + 1}, fargs...)
 	out, err := s.queryTasks(ctx, `
 		WHERE EXISTS (SELECT 1 FROM task_assignees a WHERE a.task_id = t.id AND a.user_id = $1)
 		  AND t.deleted_at IS NULL
-		  AND (st.category <> 'done' OR t.completed_at > now() - interval '7 days')
-		ORDER BY st.category = 'done', t.due_at NULLS LAST, t.updated_at DESC, t.id
-		OFFSET $2 LIMIT $3`, userID, c.Offset, limit+1)
+		  AND (st.category <> 'done' OR t.completed_at > now() - interval '7 days')`+fsql+`
+		ORDER BY `+order+`
+		OFFSET $2 LIMIT $3`, args...)
 	if err != nil {
 		return nil, "", err
 	}

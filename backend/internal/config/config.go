@@ -66,6 +66,9 @@ type Config struct {
 	// HRServiceToken lets HR read GET /api/role-catalog without a sign-in.
 	// Empty: only signed-in staff can read it.
 	HRServiceToken string
+	// StatsPullToken protects GET /api/internal/stats for the Stats module.
+	// Empty disables that route.
+	StatsPullToken string
 
 	// S3 (attachments, TASK-7). Optional: with S3_ENDPOINT unset the API
 	// answers "attachments are not configured" and everything else works.
@@ -144,6 +147,7 @@ func Load() (*Config, error) {
 
 		TasksServiceToken: strings.TrimSpace(getEnv("TASKS_SERVICE_TOKEN", "")),
 		HRServiceToken:    strings.TrimSpace(getEnv("HR_SERVICE_TOKEN", "")),
+		StatsPullToken:    strings.TrimSpace(getEnv("STATS_PULL_TOKEN", "")),
 
 		S3Endpoint:        getEnv("S3_ENDPOINT", ""),
 		S3Bucket:          getEnv("S3_BUCKET", "tasks-data-dev"),
@@ -167,6 +171,11 @@ func Load() (*Config, error) {
 		CORSAllowedOrigins: splitCSV(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3009")),
 		ShutdownTimeout:    getEnvDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
 		auth:               ab,
+	}
+	// Portal to-dos and email links need an absolute URL. Fall back to the
+	// app address when TASKS_PUBLIC_URL is unset so Den does not drop items.
+	if cfg.PublicBaseURL == "" {
+		cfg.PublicBaseURL = strings.TrimRight(cfg.AppBaseURL, "/")
 	}
 
 	if err := cfg.validate(abErr); err != nil {

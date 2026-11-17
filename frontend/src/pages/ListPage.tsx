@@ -143,7 +143,7 @@ function FilterBar({
         onChange={(e) => onChange({ ...filters, priority: e.target.value as Priority | '' })}
         className={cn(sel, 'capitalize')}
       >
-        <option value="">Any priority</option>
+        <option value="">Any urgency</option>
         {PRIORITIES.map((p) => (
           <option key={p} value={p}>
             {p}
@@ -160,7 +160,7 @@ function FilterBar({
       </select>
       {(tags.data ?? []).length > 0 ? (
         <select value={filters.tagId} onChange={(e) => onChange({ ...filters, tagId: e.target.value })} className={sel}>
-          <option value="">Any tag</option>
+          <option value="">Any label</option>
           {(tags.data ?? []).map((tg) => (
             <option key={tg.id} value={tg.id}>
               {tg.name}

@@ -2,6 +2,8 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,8 +95,40 @@ func (s *Service) notify(ctx context.Context, tx pgx.Tx, taskID, actor uuid.UUID
 			uid, taskID, actor, kind, message); err != nil {
 			return err
 		}
+		s.mirrorCatchall(ctx, tx, uid, taskID, kind, message)
 	}
 	return nil
+}
+
+// mirrorCatchall posts one Inbox notice to the Compose Telegram catch-all
+// (dev only). Failures are ignored so Telegram never blocks the change.
+func (s *Service) mirrorCatchall(ctx context.Context, tx pgx.Tx, userID, taskID uuid.UUID, kind, message string) {
+	if !s.catchall.Enabled() {
+		return
+	}
+	var email, name, key, title string
+	_ = tx.QueryRow(ctx, `
+		SELECT COALESCE(u.email, ''), u.display_name,
+		       sp.key || '-' || t.number, t.title
+		  FROM users u, tasks t JOIN spaces sp ON sp.id = t.space_id
+		 WHERE u.id = $1 AND t.id = $2`, userID, taskID).
+		Scan(&email, &name, &key, &title)
+	who := strings.TrimSpace(name)
+	if email != "" {
+		if who != "" {
+			who += " <" + email + ">"
+		} else {
+			who = email
+		}
+	}
+	if who == "" {
+		who = userID.String()
+	}
+	body := message
+	if title != "" {
+		body = key + " " + title + "\n" + message
+	}
+	_ = s.catchall.Send(ctx, "Tasks · "+who+" · "+kind, body)
 }
 
 // followers are the task's watchers plus its assignees.
@@ -150,17 +184,35 @@ type Notification struct {
 	Message   string     `json:"message"`
 	ReadAt    *time.Time `json:"read_at"`
 	CreatedAt time.Time  `json:"created_at"`
+	// Priority (urgency) and Tags (labels) are the task's current values;
+	// null and [] when the task is gone.
+	Priority *string `json:"priority"`
+	Tags     []Tag   `json:"tags"`
 }
 
-// Inbox returns the user's notifications, newest first.
-func (s *Service) Inbox(ctx context.Context, userID uuid.UUID, unreadOnly bool, limit int) ([]Notification, error) {
+// Inbox returns the user's notifications, newest first. The filter keeps
+// the notifications whose task matches by label and urgency; a
+// notification whose task is gone never matches a non-empty filter.
+func (s *Service) Inbox(ctx context.Context, userID uuid.UUID, unreadOnly bool, f TaskFilter, limit int) ([]Notification, error) {
 	limit = ClampLimit(limit)
+	args := []any{userID, unreadOnly, limit}
+	filter := ""
+	if !f.IsZero() {
+		fsql, fargs := f.sql("ft", 4)
+		filter = ` AND EXISTS (SELECT 1 FROM tasks ft WHERE ft.id = n.task_id AND ft.deleted_at IS NULL` + fsql + `)`
+		args = append(args, fargs...)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT n.id, n.task_id, n.task_key, n.task_title, COALESCE(u.display_name, 'Someone'),
-		       n.kind, n.message, n.read_at, n.created_at
-		  FROM notifications n LEFT JOIN users u ON u.id = n.actor_id
-		 WHERE n.user_id = $1 AND ($2::bool = false OR n.read_at IS NULL)
-		 ORDER BY n.created_at DESC LIMIT $3`, userID, unreadOnly, limit)
+		       n.kind, n.message, n.read_at, n.created_at, nt.priority, COALESCE(tgs.tags, '[]'::json)
+		  FROM notifications n
+		  LEFT JOIN users u ON u.id = n.actor_id
+		  LEFT JOIN tasks nt ON nt.id = n.task_id
+		  LEFT JOIN LATERAL (
+		       SELECT json_agg(json_build_object('id', tg.id, 'name', tg.name, 'color', tg.color) ORDER BY tg.name) AS tags
+		         FROM task_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.task_id = n.task_id) tgs ON true
+		 WHERE n.user_id = $1 AND ($2::bool = false OR n.read_at IS NULL)`+filter+`
+		 ORDER BY n.created_at DESC LIMIT $3`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +220,12 @@ func (s *Service) Inbox(ctx context.Context, userID uuid.UUID, unreadOnly bool, 
 	out := []Notification{}
 	for rows.Next() {
 		var n Notification
-		if err := rows.Scan(&n.ID, &n.TaskID, &n.TaskKey, &n.TaskTitle, &n.ActorName, &n.Kind, &n.Message, &n.ReadAt, &n.CreatedAt); err != nil {
+		var tags []byte
+		if err := rows.Scan(&n.ID, &n.TaskID, &n.TaskKey, &n.TaskTitle, &n.ActorName, &n.Kind, &n.Message, &n.ReadAt, &n.CreatedAt, &n.Priority, &tags); err != nil {
+			return nil, err
+		}
+		n.Tags = []Tag{}
+		if err := json.Unmarshal(tags, &n.Tags); err != nil {
 			return nil, err
 		}
 		out = append(out, n)

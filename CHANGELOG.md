@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `POST /api/internal/ideas` (service token): Intercom Telegram `/idea`
+  creates a task in the **Intercom** space (`ICM`) / **Ideas** list,
+  creating that space and list on first use (`everyone_level: view`).
+- Dev-only Telegram **catch-all** (Compose): with `TELEGRAM_DEV_CATCHALL_CHAT_ID`
+  (and optional topic id) under `APP_ENV=development`, notices are also
+  posted to one test chat prefixed with the intended recipient. Email still
+  goes to Mailpit. Not used in production.
+- Filter lists, My Work and Inbox by **label** (space tags) and **urgency**
+  (priority). My Work accepts `sort=urgency`. Portal to-dos order by urgency
+  first, then due date.
+
+### Fixed
+
+- When `TASKS_PUBLIC_URL` is unset, portal to-do and email links fall back to
+  `APP_BASE_URL`, so Den no longer drops assigned tasks for missing URLs.
+
 ## [1.0.0] - 2026-11-12
 
 Needs Den: 1.0.0 or later (Den MAJOR 1).

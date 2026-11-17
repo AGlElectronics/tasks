@@ -190,6 +190,9 @@ export type Notification = {
   message: string;
   read_at: string | null;
   created_at: string;
+  /** The task's current urgency and labels (null / [] if the task is gone). */
+  priority: Priority | null;
+  tags: Tag[];
 };
 
 export type SearchHit = {
@@ -342,13 +345,18 @@ export const deleteList = (id: string) => apiRequest<void>(`/api/v1/lists/${id}`
  * collection. The page cap only guards against a server bug; at 200 tasks a
  * page it allows 10,000 tasks per view.
  */
-async function allPagesOf<T>(path: string, key: string, signal?: AbortSignal): Promise<T[]> {
+async function allPagesOf<T>(
+  path: string,
+  key: string,
+  signal?: AbortSignal,
+  query?: Record<string, string | undefined>
+): Promise<T[]> {
   const all: T[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < 50; page++) {
     const { data, headers } = await apiRequestWithHeaders<Record<string, T[]>>(path, {
       signal,
-      query: { cursor },
+      query: { ...query, cursor },
     });
     all.push(...(data[key] ?? []));
     cursor = headers.get('X-Next-Cursor') ?? undefined;
@@ -356,7 +364,8 @@ async function allPagesOf<T>(path: string, key: string, signal?: AbortSignal): P
   }
   return all;
 }
-const allPages = (path: string, signal?: AbortSignal) => allPagesOf<Task>(path, 'tasks', signal);
+const allPages = (path: string, signal?: AbortSignal, query?: Record<string, string | undefined>) =>
+  allPagesOf<Task>(path, 'tasks', signal, query);
 
 /** Every comment and event of a task; the task detail embeds only the newest. */
 export const taskHistory = async (taskId: string, signal?: AbortSignal) => {
@@ -369,7 +378,21 @@ export const taskHistory = async (taskId: string, signal?: AbortSignal) => {
 
 export const listTasks = (listId: string, signal?: AbortSignal) => allPages(`/api/v1/lists/${listId}/tasks`, signal);
 
-export const myWork = (signal?: AbortSignal) => allPages('/api/v1/my-work', signal);
+/** Label and urgency narrowing shared by lists, My Work and the Inbox. */
+export type LabelUrgencyFilter = {
+  /** One urgency, or 
+one for tasks without one. Empty = any. */
+  priority: Priority | 'none' | '';
+  /** A label name (matches across spaces) or id. Empty = any. */
+  tag: string;
+};
+export const NO_LABEL_URGENCY_FILTER: LabelUrgencyFilter = { priority: '', tag: '' };
+const filterQuery = (f?: LabelUrgencyFilter) => ({ priority: f?.priority || undefined, tag: f?.tag || undefined });
+
+export type MyWorkSort = 'due' | 'urgency';
+
+export const myWork = (signal?: AbortSignal, filter?: LabelUrgencyFilter, sort: MyWorkSort = 'due') =>
+  allPages('/api/v1/my-work', signal, { ...filterQuery(filter), sort: sort === 'due' ? undefined : sort });
 export const createTask = (body: TaskInput) => apiRequest<Task>('/api/v1/tasks', { method: 'POST', body });
 export const getTask = (ref: string, signal?: AbortSignal) =>
   apiRequest<TaskDetail>(`/api/v1/tasks/${encodeURIComponent(ref)}`, { signal });
@@ -418,10 +441,10 @@ export const deleteChecklistItem = (itemId: string) =>
 // Watchers and the Inbox (TASK-5)
 export const watchTask = (taskId: string) => apiRequest<void>(`/api/v1/tasks/${taskId}/watch`, { method: 'POST', body: {} });
 export const unwatchTask = (taskId: string) => apiRequest<void>(`/api/v1/tasks/${taskId}/watch`, { method: 'DELETE' });
-export const getInbox = (signal?: AbortSignal, unreadOnly?: boolean) =>
+export const getInbox = (signal?: AbortSignal, unreadOnly?: boolean, filter?: LabelUrgencyFilter) =>
   apiRequest<{ notifications: Notification[] }>('/api/v1/inbox', {
     signal,
-    query: { unread: unreadOnly ? 1 : undefined },
+    query: { unread: unreadOnly ? 1 : undefined, ...filterQuery(filter) },
   }).then((r) => r.notifications);
 export const getUnreadCount = (signal?: AbortSignal) =>
   apiRequest<{ count: number }>('/api/v1/inbox/unread-count', { signal }).then((r) => r.count);

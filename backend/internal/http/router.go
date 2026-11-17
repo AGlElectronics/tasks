@@ -46,6 +46,7 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
 	"github.com/AGlElectronics/tasks/backend/internal/realtime"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
+	"github.com/AGlElectronics/tasks/backend/internal/tgcatchall"
 )
 
 // Deps groups the runtime dependencies the HTTP layer needs.
@@ -64,6 +65,9 @@ type Deps struct {
 	SendMail tasks.SendFunc
 	// Hub feeds live updates (GET /api/v1/stream); nil turns them off.
 	Hub *realtime.Hub
+	// Catchall mirrors Inbox (and email) to one Telegram chat in Compose
+	// / APP_ENV=development. Nil or disabled = production behaviour.
+	Catchall *tgcatchall.Client
 }
 
 // streamPath is exempt from the request timeout: it stays open.
@@ -139,10 +143,12 @@ func NewRouter(deps Deps, version string) http.Handler {
 	svc.SetPublicURL(deps.Config.PublicBaseURL)
 	svc.SetGroupMatch(deps.Config.Groups)
 	svc.SetDen(den)
+	svc.SetCatchall(deps.Catchall)
 	send := deps.SendMail
 	if send == nil {
 		send = mail.Send
 	}
+	// Email stays on Mailpit/SMTP; catch-all only mirrors Inbox (assigns, …).
 	th := &taskHandler{svc: svc, files: deps.Files, send: send, hub: deps.Hub}
 
 	// Orchestrator probes — unauthenticated, served from the root so they
@@ -173,6 +179,9 @@ func NewRouter(deps Deps, version string) http.Handler {
 		// Service-to-service: HR ensures one space per department
 		// (TASK-25). Guarded by TASKS_SERVICE_TOKEN, not user auth.
 		api.Post("/internal/departments", internalDepartmentsHandler(deps.Config, th.svc))
+		// Intercom Telegram /idea → Intercom space / Ideas list.
+		api.Post("/internal/ideas", internalIdeasHandler(deps.Config, th.svc))
+		api.Get("/internal/stats", internalStatsHandler(deps.Config.StatsPullToken, deps.Pool))
 
 		api.Route("/v1", func(v1 chi.Router) {
 			// Brand is public so the login screen can render before the

@@ -14,7 +14,7 @@ const PRIORITY_COLORS: Record<Priority, string> = {
 export function PriorityFlag({ priority, withLabel }: { priority: Priority | null; withLabel?: boolean }) {
   if (!priority) return null;
   return (
-    <span className={cn('inline-flex items-center gap-1 text-xs font-medium', PRIORITY_COLORS[priority])} title={`Priority: ${priority}`}>
+    <span className={cn('inline-flex items-center gap-1 text-xs font-medium', PRIORITY_COLORS[priority])} title={`Urgency: ${priority}`}>
       <Flag className="w-3.5 h-3.5" fill="currentColor" />
       {withLabel ? <span className="capitalize">{priority}</span> : null}
     </span>

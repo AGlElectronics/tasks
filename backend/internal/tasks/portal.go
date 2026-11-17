@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -24,7 +25,8 @@ const portalTodoLimit = 50
 
 // PortalTodos lists open tasks assigned to the person Den names (issuer and
 // subject). Done, trashed, and tasks in an archived space or list are left
-// out. An unknown person gets an empty list.
+// out. An unknown person gets an empty list. The most urgent tasks come
+// first (urgent, high, normal, low, none), then the soonest due.
 func (s *Service) PortalTodos(ctx context.Context, issuer, subject string) ([]PortalTodo, error) {
 	soon, err := s.Setting(ctx, "reminders.due_soon_days")
 	if err != nil {
@@ -33,7 +35,8 @@ func (s *Service) PortalTodos(ctx context.Context, issuer, subject string) ([]Po
 	rows, err := s.pool.Query(ctx, `
 		SELECT sp.key || '-' || t.number, t.title, l.name, sp.name,
 		       t.due_at, COALESCE(t.due_at < CURRENT_DATE, false),
-		       CASE WHEN t.due_at IS NULL THEN NULL ELSE (t.due_at - CURRENT_DATE)::int END
+		       CASE WHEN t.due_at IS NULL THEN NULL ELSE (t.due_at - CURRENT_DATE)::int END,
+		       t.priority
 		  FROM tasks t
 		  JOIN spaces sp ON sp.id = t.space_id
 		  JOIN lists l ON l.id = t.list_id
@@ -43,7 +46,7 @@ func (s *Service) PortalTodos(ctx context.Context, issuer, subject string) ([]Po
 		 WHERE u.issuer = $1 AND u.subject = $2
 		   AND t.deleted_at IS NULL AND st.category <> 'done'
 		   AND sp.archived_at IS NULL AND l.archived_at IS NULL
-		 ORDER BY t.due_at NULLS LAST, t.updated_at DESC
+		 ORDER BY `+urgencyRank("t")+`, t.due_at NULLS LAST, t.updated_at DESC, t.id
 		 LIMIT $3`, issuer, subject, portalTodoLimit)
 	if err != nil {
 		return nil, err
@@ -55,12 +58,18 @@ func (s *Service) PortalTodos(ctx context.Context, issuer, subject string) ([]Po
 		var due *time.Time
 		var overdue bool
 		var inDays *int
-		if err := rows.Scan(&key, &title, &listName, &spaceName, &due, &overdue, &inDays); err != nil {
+		var priority *string
+		if err := rows.Scan(&key, &title, &listName, &spaceName, &due, &overdue, &inDays, &priority); err != nil {
 			return nil, err
 		}
 		item := PortalTodo{
 			ID: key, Title: title, Severity: "info",
 			Detail: listName + " · " + spaceName,
+		}
+		// Urgent and high tasks say so in the detail line; Den has no
+		// priority field of its own.
+		if priority != nil && (*priority == "urgent" || *priority == "high") {
+			item.Detail = strings.ToUpper((*priority)[:1]) + (*priority)[1:] + " · " + item.Detail
 		}
 		if s.publicURL != "" {
 			item.URL = s.publicURL + "/t/" + key
@@ -74,6 +83,10 @@ func (s *Service) PortalTodos(ctx context.Context, issuer, subject string) ([]Po
 		case overdue:
 			item.Severity = "danger"
 		case inDays != nil && soon > 0 && *inDays >= 0 && *inDays <= soon:
+			item.Severity = "warning"
+		}
+		// An urgent task is at least a warning, even without a due date.
+		if priority != nil && *priority == "urgent" && item.Severity == "info" {
 			item.Severity = "warning"
 		}
 		out = append(out, item)

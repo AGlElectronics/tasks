@@ -1,8 +1,19 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { CheckCircle2, Circle, Inbox } from 'lucide-react';
+import { ArrowUpDown, CheckCircle2, Circle, Inbox } from 'lucide-react';
 import { ApiError } from '@/api/client';
-import { listSpaces, myWork, updateTask, type Space, type Task } from '@/api/tasks';
+import {
+  listSpaces,
+  myWork,
+  NO_LABEL_URGENCY_FILTER,
+  updateTask,
+  type LabelUrgencyFilter as LabelUrgencyFilterValue,
+  type MyWorkSort,
+  type Space,
+  type Task,
+} from '@/api/tasks';
+import { LabelPills, LabelUrgencyFilter } from '@/components/LabelUrgencyFilter';
 import { notify } from '@/lib/notify';
 import { Card } from '@/components/ui/Card';
 import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
@@ -49,7 +60,13 @@ function groupTasks(tasks: Task[]): Group[] {
 
 export function MyWorkPage() {
   const qc = useQueryClient();
-  const tasks = useQuery({ queryKey: ['my-work'], queryFn: ({ signal }) => myWork(signal) });
+  const [filter, setFilter] = useState<LabelUrgencyFilterValue>(NO_LABEL_URGENCY_FILTER);
+  const [sort, setSort] = useState<MyWorkSort>('due');
+  const filtered = filter.priority !== '' || filter.tag !== '';
+  const tasks = useQuery({
+    queryKey: ['my-work', filter, sort],
+    queryFn: ({ signal }) => myWork(signal, filter, sort),
+  });
   const spaces = useQuery({ queryKey: ['spaces'], queryFn: ({ signal }) => listSpaces(signal) });
 
   const toggle = useMutation({
@@ -77,7 +94,24 @@ export function MyWorkPage() {
 
   return (
     <PageContainer>
-      <PageHeader title="My work" description="Tasks assigned to you, by due date." />
+      <PageHeader
+        title="My work"
+        description={sort === 'urgency' ? 'Tasks assigned to you, most urgent first.' : 'Tasks assigned to you, by due date.'}
+      />
+      <LabelUrgencyFilter value={filter} onChange={setFilter}>
+        <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <ArrowUpDown className="w-3.5 h-3.5" />
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as MyWorkSort)}
+            className="h-8 rounded-pill border border-border bg-card px-2.5 text-xs"
+            aria-label="Sort within each group"
+          >
+            <option value="due">Due date</option>
+            <option value="urgency">Urgency, then due date</option>
+          </select>
+        </label>
+      </LabelUrgencyFilter>
       {tasks.isLoading ? (
         <LoadingRow />
       ) : tasks.isError ? (
@@ -86,12 +120,24 @@ export function MyWorkPage() {
         <Card>
           <EmptyState
             icon={Inbox}
-            title="Nothing assigned to you"
-            description="When someone assigns you a task it shows up here."
+            title={filtered ? 'No tasks match' : 'Nothing assigned to you'}
+            description={
+              filtered ? 'Try a different urgency or label, or clear the filter.' : 'When someone assigns you a task it shows up here.'
+            }
             action={
-              <Link to="/spaces" className="text-sm font-semibold text-primary hover:underline">
-                Browse spaces
-              </Link>
+              filtered ? (
+                <button
+                  type="button"
+                  onClick={() => setFilter(NO_LABEL_URGENCY_FILTER)}
+                  className="text-sm font-semibold text-primary hover:underline"
+                >
+                  Clear filter
+                </button>
+              ) : (
+                <Link to="/spaces" className="text-sm font-semibold text-primary hover:underline">
+                  Browse spaces
+                </Link>
+              )
             }
           />
         </Card>
@@ -127,6 +173,7 @@ export function MyWorkPage() {
                             {space?.name ?? ''} · {t.list_name}
                           </span>
                           <TaskMeta task={t} />
+                          <LabelPills tags={t.tags} />
                         </div>
                       </div>
                       <PriorityFlag priority={t.priority} />

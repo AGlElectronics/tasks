@@ -50,3 +50,32 @@ func internalDepartmentsHandler(cfg *config.Config, svc *tasks.Service) http.Han
 		writeJSON(w, status, sp)
 	}
 }
+
+// internalIdeasHandler serves POST /api/internal/ideas for Intercom: ensures
+// the Intercom space + Ideas list exist and creates a task from a Telegram
+// /idea capture. Authenticated by TASKS_SERVICE_TOKEN (same as departments).
+func internalIdeasHandler(cfg *config.Config, svc *tasks.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(cfg.TasksServiceToken)
+		if token == "" {
+			http.NotFound(w, r)
+			return
+		}
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(got)), []byte(token)) != 1 {
+			httperror.Render(w, r, httperror.New(httperror.CodeUnauthorized, "invalid service token"))
+			return
+		}
+		var in tasks.IntercomIdeaInput
+		if err := decodeJSONLenient(r, &in); err != nil {
+			httperror.Render(w, r, err)
+			return
+		}
+		out, err := svc.CreateIntercomIdea(r.Context(), in)
+		if err != nil {
+			httperror.Render(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, out)
+	}
+}

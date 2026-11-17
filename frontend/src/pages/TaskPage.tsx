@@ -19,6 +19,7 @@ import {
   PRIORITIES,
   addChecklistItem,
   addComment,
+  createTag,
   createTask,
   deleteAttachment,
   deleteChecklistItem,
@@ -79,7 +80,7 @@ function describeBase(e: TaskEvent): string {
     case 'list':
       return `moved it from ${from} to ${to}`;
     case 'priority':
-      return to ? `set priority to ${to}` : 'cleared the priority';
+      return to ? `set urgency to ${to}` : 'cleared the urgency';
     case 'due_at':
       return to ? `set the due date to ${to}` : 'removed the due date';
     case 'start_at':
@@ -89,7 +90,7 @@ function describeBase(e: TaskEvent): string {
     case 'unassigned':
       return `unassigned ${str(e.data.user)}`;
     case 'tags':
-      return 'changed the tags';
+      return 'changed the labels';
     case 'attachment':
       return `attached ${str(e.data.filename) ?? 'a file'}`;
     case 'checklist_completed':
@@ -182,11 +183,21 @@ function AssigneePicker({ task, onChange }: { task: TaskDetail; onChange: (ids: 
   );
 }
 
-/** Space-level tags on this task (TASK-4). */
+/** Space-level labels (tags) on this task (TASK-4). Space managers can also create one here. */
 function TagPicker({ task, onChange }: { task: TaskDetail; onChange: (ids: string[]) => void }) {
+  const qc = useQueryClient();
   const tags = useQuery({ queryKey: ['tags', task.space_id], queryFn: ({ signal }) => listTags(task.space_id, signal) });
   const [open, setOpen] = useState(false);
+  const [newName, setNewName] = useState('');
   const selected = new Set(task.tags.map((t) => t.id));
+  const create = useMutation({
+    mutationFn: (name: string) => createTag(task.space_id, { name }),
+    onSuccess: (tg) => {
+      setNewName('');
+      void qc.invalidateQueries({ queryKey: ['tags', task.space_id] });
+      onChange([...selected, tg.id]);
+    },
+  });
   return (
     <div className="relative">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -204,7 +215,7 @@ function TagPicker({ task, onChange }: { task: TaskDetail; onChange: (ids: strin
           onClick={() => setOpen((o) => !o)}
           className="inline-flex items-center gap-1 rounded-pill border border-dashed border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
         >
-          <TagIcon className="w-3.5 h-3.5" /> {task.tags.length ? 'Edit' : 'Tag'}
+          <TagIcon className="w-3.5 h-3.5" /> {task.tags.length ? 'Edit' : 'Add label'}
         </button>
       </div>
       {open ? (
@@ -226,7 +237,35 @@ function TagPicker({ task, onChange }: { task: TaskDetail; onChange: (ids: strin
             </label>
           ))}
           {tags.data?.length === 0 ? (
-            <p className="text-xs text-muted-foreground p-2">No tags in this space yet — a space manager can add them on the space page.</p>
+            <p className="text-xs text-muted-foreground p-2">No labels in this space yet — add one below, or ask a space manager.</p>
+          ) : null}
+          <form
+            className="flex gap-1 p-1 border-t border-border mt-1"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (newName.trim()) create.mutate(newName.trim());
+            }}
+          >
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="New label"
+              maxLength={50}
+              aria-label="New label name"
+              className="min-w-0 flex-1 h-8 rounded-md border border-input bg-background px-2 text-xs"
+            />
+            <Button type="submit" size="sm" disabled={!newName.trim() || create.isPending}>
+              Add
+            </Button>
+          </form>
+          {create.error ? (
+            <p className="text-xs text-destructive px-2 pb-1">
+              {create.error instanceof ApiError && create.error.status === 403
+                ? 'Only space managers can create labels.'
+                : create.error instanceof ApiError
+                  ? create.error.message
+                  : 'Could not add the label.'}
+            </p>
           ) : null}
           <button type="button" className="w-full text-xs text-muted-foreground py-1.5 hover:text-foreground" onClick={() => setOpen(false)}>
             Close
@@ -503,7 +542,7 @@ export function TaskPage() {
   const set = (body: TaskPatch) => patch.mutate({ id: t.id, body: { ...body, version: t.version } });
   const watching = !!me && t.watchers.some((w) => w.id === me.id);
   // Fields the Vikunja feedback called noise stay behind "More" until used.
-  const showMore = moreFields || !!t.priority || !!t.start_at;
+  const showMore = moreFields || !!t.start_at;
 
   const hidden = t.comments_total - t.comments.length + (t.events_total - t.events.length);
   const source = fullHistory && history.data ? history.data : t;
@@ -750,11 +789,28 @@ export function TaskPage() {
               />
             </div>
             <div>
-              <Label>Tags</Label>
+              <Label>Labels</Label>
               <TagPicker task={t} onChange={(ids) => set({ tag_ids: ids })} />
             </div>
             <TaskFields spaceId={t.space_id} values={t.fields} onChange={(id, v) => set({ fields: { [id]: v } })} />
             {!t.parent_id ? <RecurrencePicker value={t.recurrence} onChange={(r) => set({ recurrence: r })} /> : null}
+
+            <div>
+              <Label htmlFor="prio">Urgency</Label>
+              <select
+                id="prio"
+                value={t.priority ?? ''}
+                onChange={(e) => set({ priority: (e.target.value || null) as TaskPatch['priority'] })}
+                className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm capitalize"
+              >
+                <option value="">Not set</option>
+                {PRIORITIES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             {!showMore ? (
               <button
@@ -766,22 +822,6 @@ export function TaskPage() {
               </button>
             ) : (
               <>
-                <div>
-                  <Label htmlFor="prio">Priority</Label>
-                  <select
-                    id="prio"
-                    value={t.priority ?? ''}
-                    onChange={(e) => set({ priority: (e.target.value || null) as TaskPatch['priority'] })}
-                    className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm capitalize"
-                  >
-                    <option value="">None</option>
-                    {PRIORITIES.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-                </div>
                 <div>
                   <Label htmlFor="start">Start</Label>
                   <input

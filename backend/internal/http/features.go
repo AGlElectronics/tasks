@@ -185,7 +185,11 @@ func (h *taskHandler) unwatch(r *http.Request, u *auth.User) (int, any, error) {
 func (h *taskHandler) inbox(r *http.Request, u *auth.User) (int, any, error) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	unread := r.URL.Query().Get("unread") == "1"
-	out, err := h.svc.Inbox(r.Context(), u.ID, unread, limit)
+	filter, err := tasks.ParseTaskFilter(r.URL.Query())
+	if err != nil {
+		return 0, nil, err
+	}
+	out, err := h.svc.Inbox(r.Context(), u.ID, unread, filter, limit)
 	if err != nil {
 		return 0, nil, err
 	}

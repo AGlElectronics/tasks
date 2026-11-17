@@ -29,6 +29,7 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
 	"github.com/AGlElectronics/tasks/backend/internal/realtime"
 	"github.com/AGlElectronics/tasks/backend/internal/tasks"
+	"github.com/AGlElectronics/tasks/backend/internal/tgcatchall"
 	"github.com/AGlElectronics/tasks/backend/internal/tlscert"
 )
 
@@ -120,6 +121,11 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 	jobs.SetPublicURL(cfg.PublicBaseURL)
 	jobs.SetGroupMatch(cfg.Groups)
 	jobs.SetDen(den)
+	catchall := tgcatchall.New(tgcatchall.FromEnv(os.Getenv))
+	jobs.SetCatchall(catchall)
+	if catchall.Enabled() {
+		logger.Info().Msg("Telegram dev catch-all on: Tasks Inbox notices also go to the test chat (email still uses Mailpit/SMTP)")
+	}
 	if cfg.SMTPHost != "" {
 		logger.Info().Str("host", cfg.SMTPHost).Msg("own SMTP configured (Den's SMTP wins when paired and sent)")
 	}
@@ -177,6 +183,7 @@ func Run(ctx context.Context, logger zerolog.Logger) error {
 		OIDCVerifier: oidcVerifier,
 		Access:       access,
 		Files:        filesClient,
+		Catchall:     catchall,
 	}, Version)
 
 	server := &nethttp.Server{

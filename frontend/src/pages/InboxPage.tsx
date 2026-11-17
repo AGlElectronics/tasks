@@ -5,7 +5,15 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { AtSign, Bell, CalendarClock, CheckCheck, Mail, MessageSquare, UserPlus } from 'lucide-react';
-import { getInbox, markRead, type Notification } from '@/api/tasks';
+import {
+  getInbox,
+  markRead,
+  NO_LABEL_URGENCY_FILTER,
+  type LabelUrgencyFilter as LabelUrgencyFilterValue,
+  type Notification,
+} from '@/api/tasks';
+import { LabelPills, LabelUrgencyFilter } from '@/components/LabelUrgencyFilter';
+import { PriorityFlag } from '@/components/TaskBits';
 import { EmailPrefs } from '@/components/EmailPrefs';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -42,7 +50,13 @@ function Row({ n, onOpen }: { n: Notification; onOpen: (n: Notification) => void
         <div className="text-xs text-muted-foreground mt-0.5 truncate">
           <span className="font-mono">{n.task_key}</span> · {n.task_title}
         </div>
+        {n.tags.length > 0 ? (
+          <div className="mt-1">
+            <LabelPills tags={n.tags} />
+          </div>
+        ) : null}
       </div>
+      <PriorityFlag priority={n.priority} />
       <span className="text-xs text-muted-foreground shrink-0">{timeAgo(n.created_at)}</span>
       {!n.read_at ? <span className="w-2 h-2 rounded-full bg-primary shrink-0 mt-1.5" aria-label="Unread" /> : null}
     </>
@@ -66,9 +80,11 @@ export function InboxPage() {
   const qc = useQueryClient();
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
+  const [filter, setFilter] = useState<LabelUrgencyFilterValue>(NO_LABEL_URGENCY_FILTER);
+  const filtered = filter.priority !== '' || filter.tag !== '';
   const inbox = useQuery({
-    queryKey: ['inbox', unreadOnly],
-    queryFn: ({ signal }) => getInbox(signal, unreadOnly),
+    queryKey: ['inbox', unreadOnly, filter],
+    queryFn: ({ signal }) => getInbox(signal, unreadOnly, filter),
   });
   const read = useMutation({
     mutationFn: (ids?: string[]) => markRead(ids),
@@ -98,13 +114,22 @@ export function InboxPage() {
         }
       />
       {showEmail ? <EmailPrefs /> : null}
+      <LabelUrgencyFilter value={filter} onChange={setFilter} />
       {inbox.isLoading ? (
         <LoadingRow />
       ) : inbox.isError ? (
         <ErrorRow message="Could not load your inbox." />
       ) : inbox.data!.length === 0 ? (
         <Card>
-          <EmptyState icon={Bell} title="Nothing here" description="Watch a task or get assigned, and its updates show up here." />
+          <EmptyState
+            icon={Bell}
+            title={filtered ? 'No notifications match' : 'Nothing here'}
+            description={
+              filtered
+                ? 'Try a different urgency or label, or clear the filter.'
+                : 'Watch a task or get assigned, and its updates show up here.'
+            }
+          />
         </Card>
       ) : (
         <Card className="divide-y divide-border p-0 overflow-hidden">
