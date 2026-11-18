@@ -37,6 +37,10 @@ const (
 // for the Tasks API (the token contract's audience mapper on tasks-spa).
 const DefaultOIDCAudience = "tasks-api"
 
+// MinServiceTokenLength is the shortest accepted shared service token
+// (STATS_PULL_TOKEN and friends) when set.
+const MinServiceTokenLength = 32
+
 // Config is the validated process configuration.
 type Config struct {
 	// Core
@@ -221,6 +225,9 @@ func (c *Config) validate(authErr error) error {
 	}
 	if c.SMTPHost != "" && c.SMTPFrom == "" {
 		errs = append(errs, "SMTP_FROM is required when SMTP_HOST is set")
+	}
+	if c.StatsPullToken != "" && len(c.StatsPullToken) < MinServiceTokenLength {
+		errs = append(errs, fmt.Sprintf("STATS_PULL_TOKEN must be at least %d characters (openssl rand -hex 32)", MinServiceTokenLength))
 	}
 
 	if len(errs) > 0 {
