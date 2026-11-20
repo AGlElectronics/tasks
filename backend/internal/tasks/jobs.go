@@ -203,7 +203,7 @@ func (s *Service) RunDueReminders(ctx context.Context) (int, error) {
 		case 1:
 			msg = "is due tomorrow"
 		}
-		if err := autoNotify(ctx, tx, d.task, nil, "due_soon", msg, []uuid.UUID{d.user}); err != nil {
+		if err := s.autoNotify(ctx, tx, d.task, nil, "due_soon", msg, []uuid.UUID{d.user}); err != nil {
 			return 0, err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO due_reminders (task_id, user_id, due_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,

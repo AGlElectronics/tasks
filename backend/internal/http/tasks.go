@@ -565,8 +565,12 @@ func (h *taskHandler) listTasks(r *http.Request, u *auth.User) (int, any, error)
 	if _, _, _, err := h.requireList(r, u, id, tasks.LevelView); err != nil {
 		return 0, nil, err
 	}
+	filter, err := tasks.ParseTaskFilter(r.URL.Query())
+	if err != nil {
+		return 0, nil, err
+	}
 	limit, cursor := pageParams(r)
-	out, next, err := h.svc.ListTasks(r.Context(), id, limit, cursor)
+	out, next, err := h.svc.ListTasks(r.Context(), id, filter, limit, cursor)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -574,8 +578,12 @@ func (h *taskHandler) listTasks(r *http.Request, u *auth.User) (int, any, error)
 }
 
 func (h *taskHandler) myWork(r *http.Request, u *auth.User) (int, any, error) {
+	filter, err := tasks.ParseTaskFilter(r.URL.Query())
+	if err != nil {
+		return 0, nil, err
+	}
 	limit, cursor := pageParams(r)
-	out, next, err := h.svc.MyWork(r.Context(), u.ID, limit, cursor)
+	out, next, err := h.svc.MyWork(r.Context(), u.ID, filter, r.URL.Query().Get("sort"), limit, cursor)
 	if err != nil {
 		return 0, nil, err
 	}

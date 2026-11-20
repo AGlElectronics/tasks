@@ -29,6 +29,7 @@ import {
   type Category,
   type Space,
   type StatusInput,
+  type Tag,
 } from '@/api/tasks';
 import { AutomationsCard } from '@/components/AutomationsCard';
 import { FieldsCard } from '@/components/CustomFields';
@@ -424,7 +425,34 @@ function SpaceSettingsCard({ space }: { space: Space }) {
   );
 }
 
-/** Space tags (TASK-4): shared labels tasks in this space can wear. */
+/** A label's name, editable in place: saves on blur or Enter when it changed. */
+function LabelName({ tag, onRename, error }: { tag: Tag; onRename: (name: string) => void; error: boolean }) {
+  const [draft, setDraft] = useState(tag.name);
+  useEffect(() => setDraft(tag.name), [tag.name]);
+  const commit = () => {
+    const next = draft.trim();
+    if (!next) setDraft(tag.name);
+    else if (next !== tag.name) onRename(next);
+  };
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') setDraft(tag.name);
+      }}
+      maxLength={50}
+      aria-label={`Rename label ${tag.name}`}
+      aria-invalid={error}
+      className="h-8 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-2 text-sm font-semibold text-white hover:border-border focus-visible:outline-none focus-visible:border-primary"
+      style={{ backgroundColor: tag.color, maxWidth: '14rem' }}
+    />
+  );
+}
+
+/** Space labels (tags, TASK-4): shared labels tasks in this space can wear. */
 function TagsCard({ space }: { space: Space }) {
   const qc = useQueryClient();
   const tags = useQuery({ queryKey: ['tags', space.id], queryFn: ({ signal }) => listTags(space.id, signal) });
@@ -446,12 +474,20 @@ function TagsCard({ space }: { space: Space }) {
     mutationFn: ({ id, c }: { id: string; c: string }) => updateTag(space.id, id, { color: c }),
     onSuccess: invalidate,
   });
+  const rename = useMutation({
+    mutationFn: ({ id, name: n }: { id: string; name: string }) => updateTag(space.id, id, { name: n }),
+    onSuccess: invalidate,
+    onError: invalidate, // put the old name back in the field
+  });
   const remove = useMutation({ mutationFn: (id: string) => deleteTag(space.id, id), onSuccess: invalidate });
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Tags</CardTitle>
-        <CardDescription>Labels anyone with edit access can put on tasks in this space.</CardDescription>
+        <CardTitle>Labels</CardTitle>
+        <CardDescription>
+          Colour-coded labels anyone with edit access can put on tasks in this space. Click a name to rename it; filter by
+          label in lists, My work and the Inbox.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
         {(tags.data ?? []).map((tg) => (
@@ -462,17 +498,12 @@ function TagsCard({ space }: { space: Space }) {
               onChange={(e) => recolor.mutate({ id: tg.id, c: e.target.value })}
               className="w-9 h-9 rounded border border-border bg-background p-1"
             />
-            <span
-              className="inline-flex rounded-pill px-2 py-0.5 text-xs font-semibold text-white"
-              style={{ backgroundColor: tg.color }}
-            >
-              {tg.name}
-            </span>
+            <LabelName tag={tg} onRename={(n) => rename.mutate({ id: tg.id, name: n })} error={rename.isError} />
             <button
               type="button"
               className="ml-auto text-muted-foreground hover:text-destructive"
-              title="Delete tag (removed from every task)"
-              onClick={() => confirm(`Delete the tag "${tg.name}"? It is removed from every task.`) && remove.mutate(tg.id)}
+              title="Delete label (removed from every task)"
+              onClick={() => confirm(`Delete the label "${tg.name}"? It is removed from every task.`) && remove.mutate(tg.id)}
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -491,12 +522,13 @@ function TagsCard({ space }: { space: Space }) {
             onChange={(e) => setColor(e.target.value)}
             className="w-9 h-9 rounded border border-border bg-background p-1 shrink-0"
           />
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="New tag name" maxLength={50} />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="New label name" maxLength={50} />
           <Button type="submit" disabled={!name.trim() || add.isPending}>
             <TagIcon className="w-4 h-4" /> Add
           </Button>
         </form>
-        {add.error ? <p className="text-sm text-destructive">{errText(add.error, 'Could not add the tag.')}</p> : null}
+        {add.error ? <p className="text-sm text-destructive">{errText(add.error, 'Could not add the label.')}</p> : null}
+        {rename.error ? <p className="text-sm text-destructive">{errText(rename.error, 'Could not rename the label.')}</p> : null}
       </CardContent>
     </Card>
   );

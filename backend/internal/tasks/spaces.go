@@ -20,6 +20,7 @@ import (
 	"github.com/AGlElectronics/tasks/backend/internal/groupmatch"
 	"github.com/AGlElectronics/tasks/backend/internal/httperror"
 	"github.com/AGlElectronics/tasks/backend/internal/mail"
+	"github.com/AGlElectronics/tasks/backend/internal/tgcatchall"
 )
 
 // Service is safe for concurrent use.
@@ -34,6 +35,9 @@ type Service struct {
 	// den is the pairing. Nil, or a client with no bundle, means standalone:
 	// module settings then come only from Tasks.
 	den *denlink.Client
+	// catchall mirrors Inbox (and optional email) notices to one Telegram
+	// chat in Compose / APP_ENV=development. Nil or disabled = production.
+	catchall *tgcatchall.Client
 }
 
 // SetGroupMatch sets the group matching rule (OIDC_GROUP_MATCH,
@@ -47,6 +51,9 @@ func (s *Service) SetPublicURL(u string) { s.publicURL = strings.TrimRight(u, "/
 // SetDen attaches the Den pairing so module settings and the pairing
 // credential come from the shared client instead of the bundle column.
 func (s *Service) SetDen(d *denlink.Client) { s.den = d }
+
+// SetCatchall attaches the Compose Telegram catch-all (dev only).
+func (s *Service) SetCatchall(c *tgcatchall.Client) { s.catchall = c }
 
 // NewService constructs the task service.
 func NewService(pool *pgxpool.Pool) *Service {

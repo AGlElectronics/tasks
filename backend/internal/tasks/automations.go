@@ -509,8 +509,8 @@ func autoEvent(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, actor *uuid.UUI
 	return err
 }
 
-// autoNotify is notify with a nullable actor.
-func autoNotify(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, actor *uuid.UUID, kind, message string, userIDs []uuid.UUID) error {
+// autoNotify is notify with a nullable actor (also mirrors the Compose catch-all).
+func (s *Service) autoNotify(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, actor *uuid.UUID, kind, message string, userIDs []uuid.UUID) error {
 	seen := map[uuid.UUID]bool{}
 	if actor != nil {
 		seen[*actor] = true
@@ -527,6 +527,7 @@ func autoNotify(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, actor *uuid.UU
 			uid, taskID, actor, kind, message); err != nil {
 			return err
 		}
+		s.mirrorCatchall(ctx, tx, uid, taskID, kind, message)
 	}
 	return nil
 }
@@ -674,7 +675,7 @@ func (s *Service) applyActions(ctx context.Context, tx pgx.Tx, a Automation, tas
 			if err != nil {
 				return nil, "", err
 			}
-			if err := autoNotify(ctx, tx, taskID, actor, "status", fmt.Sprintf("moved to %s by automation %q", name, a.Name), followers); err != nil {
+			if err := s.autoNotify(ctx, tx, taskID, actor, "status", fmt.Sprintf("moved to %s by automation %q", name, a.Name), followers); err != nil {
 				return nil, "", err
 			}
 			chain = append(chain, autoTrigger{kind: "status_changed", statusID: *act.StatusID, category: category})
@@ -695,7 +696,7 @@ func (s *Service) applyActions(ctx context.Context, tx pgx.Tx, a Automation, tas
 			if err := autoEvent(ctx, tx, taskID, actor, "assigned", map[string]any{"user": name, "automation": a.Name}); err != nil {
 				return nil, "", err
 			}
-			if err := autoNotify(ctx, tx, taskID, actor, "assigned",
+			if err := s.autoNotify(ctx, tx, taskID, actor, "assigned",
 				fmt.Sprintf("assigned this task to you (automation %q)", a.Name), []uuid.UUID{*act.UserID}); err != nil {
 				return nil, "", err
 			}
@@ -813,7 +814,7 @@ func (s *Service) applyActions(ctx context.Context, tx pgx.Tx, a Automation, tas
 			if err != nil {
 				return nil, "", err
 			}
-			if err := autoNotify(ctx, tx, taskID, nil, "automation",
+			if err := s.autoNotify(ctx, tx, taskID, nil, "automation",
 				fmt.Sprintf("%s (automation %q)", strings.TrimSpace(act.Message), a.Name), followers); err != nil {
 				return nil, "", err
 			}

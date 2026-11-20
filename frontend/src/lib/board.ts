@@ -50,10 +50,10 @@ export type OrderableTask = {
 /** Sort orders a person can pick in the list view. */
 export type SortKey = 'smart' | 'manual' | 'due' | 'priority' | 'title' | 'created' | 'updated';
 export const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'smart', label: 'Priority, then due date' },
+  { key: 'smart', label: 'Urgency, then due date' },
   { key: 'manual', label: 'Manual (board order)' },
   { key: 'due', label: 'Due date' },
-  { key: 'priority', label: 'Priority' },
+  { key: 'priority', label: 'Urgency' },
   { key: 'title', label: 'Title' },
   { key: 'created', label: 'Newest first' },
   { key: 'updated', label: 'Recently updated' },
